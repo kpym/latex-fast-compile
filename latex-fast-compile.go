@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/fsnotify/fsnotify"
 	flag "github.com/spf13/pflag"
 )
 
@@ -40,7 +41,10 @@ func check(e error, m ...interface{}) {
 			fmt.Println("Error.")
 		}
 		fmt.Printf("More info: %v\n", e)
-		panic(e)
+		// if we are in watch mode, do not halt on error
+		if !isRecompiling {
+			panic(e)
+		}
 	}
 }
 
@@ -56,14 +60,20 @@ func end() {
 }
 
 var (
-	basename         string
+	// flags
 	isDirtyFormat    bool
 	isDirectSource   bool
 	noSync           bool
 	synctexOption    string = "--synctex=-1"
+	watchFile        bool
+	waitForEdit      bool
 	showhelp         bool
 	tempFolderName   string
 	tempFolderOption string = ""
+	// global variables
+	basename      string
+	formatbase    string
+	isRecompiling bool
 	// temp variable for error catch
 	err error
 )
@@ -74,6 +84,8 @@ func SetParameters() {
 	flag.BoolVar(&isDirectSource, "skip-fmt", false, "Skip .fmt file and compile all.")
 	flag.BoolVar(&noSync, "no-synctex", false, "Do not build .synctex file.")
 	flag.StringVar(&tempFolderName, "temp-folder", "", "Folder to store all temp files, .fmt included.")
+	flag.BoolVar(&watchFile, "watch", false, "Keep watching the .tex file and recompile if changed.")
+	flag.BoolVar(&waitForEdit, "wait-modify", false, "Do not compile before the first file modification (needs --watch).")
 	flag.BoolVarP(&showhelp, "help", "h", false, "Print this help message.")
 	// keep the flags order
 	flag.CommandLine.SortFlags = false
@@ -91,10 +103,10 @@ func SetParameters() {
 
 	// check for positional parameters
 	if flag.NArg() > 1 {
-		check(errors.New("No more than one positional parameter (markdown filename) can be specified."))
+		check(errors.New("No more than one positional parameter (.tex filename) can be specified."))
 	}
 	if flag.NArg() == 0 {
-		check(errors.New("You should provide a file to compile."))
+		check(errors.New("You should provide a .tex file to compile."))
 	}
 	basename = strings.TrimSuffix(flag.Arg(0), ".tex")
 	if len(tempFolderName) > 0 {
@@ -131,23 +143,12 @@ func run(name string, arg ...string) {
 	if err != nil {
 		fmt.Println("\nThe compilation finished with errors.")
 		dat, err := ioutil.ReadFile(filepath.Join(tempFolderName, basename+".log"))
-		check(err)
+		check(err, "Problem reading ", basename+".log")
 		fmt.Print(string(dat))
 	}
 }
 
-func main() {
-	// error handling
-	defer end()
-	// The flags
-	SetParameters()
-	// start compiling
-	if isFileMissing(basename + ".tex") {
-		fmt.Println("file " + basename + ".tex is missing.")
-		os.Exit(1)
-	}
-
-	formatbase := filepath.Join(tempFolderName, basename)
+func recompile() {
 	if !isDirectSource && isDirtyFormat || isFileMissing(formatbase+".fmt") {
 		fmt.Println("\nprecompile ...")
 		run("etex", "-interaction=batchmode", "-halt-on-error", tempFolderOption, "-initialize", "-jobname="+basename, "&pdflatex", "mylatexformat.ltx", basename+".tex")
@@ -164,5 +165,70 @@ func main() {
 		run("pdflatex", "-interaction=batchmode", "-halt-on-error", synctexOption, tempFolderOption, "&"+basename, basename+".tex")
 	}
 	fmt.Println(strings.Repeat("=", 77))
-	fmt.Println("End fast compile.")
+
+	fmt.Print("End fast compile.")
+	if isRecompiling {
+		fmt.Println(" Wait for new changes ...")
+	}
+	isRecompiling = false
+}
+
+func main() {
+	// error handling
+	defer end()
+	// The flags
+	SetParameters()
+	// start compiling
+	if isFileMissing(basename + ".tex") {
+		fmt.Println("file " + basename + ".tex is missing.")
+		os.Exit(1)
+	}
+
+	formatbase = filepath.Join(tempFolderName, basename)
+
+	if !watchFile || !waitForEdit {
+		recompile()
+	}
+
+	if watchFile {
+		fmt.Println("Watching for files changes ... (to exit press Ctrl/Cmd-C).")
+		// creates a new file watcher
+		watcher, err := fsnotify.NewWatcher()
+		check(err, "Problem with the file watcher")
+		defer watcher.Close()
+
+		// stop watching ?
+		done := make(chan bool)
+
+		// watch and print
+		var ok bool
+		go func() {
+			for {
+				select {
+				case event, ok := <-watcher.Events:
+					if !ok {
+						return
+					}
+					if event.Op&fsnotify.Write == fsnotify.Write {
+						if !isRecompiling {
+							isRecompiling = true
+							fmt.Println("\nFile changed: recompiling ...")
+							go recompile()
+						}
+					}
+				case err, ok = <-watcher.Errors:
+					if !ok {
+						return
+					}
+					fmt.Println("error [fsnotify]:", err)
+				}
+			}
+		}()
+
+		// out of the box fsnotify can watch a single file, or a single directory
+		err = watcher.Add(basename + ".tex")
+		check(err, "Problem watching", basename+".tex")
+
+		<-done
+	}
 }

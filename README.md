@@ -16,6 +16,8 @@ Usage: latex-fast-compile [options] filename[.tex].
       --skip-fmt             Skip .fmt file and compile all.
       --no-synctex           Do not build .synctex file.
       --temp-folder string   Folder to store all temp files, .fmt included.
+      --watch                Keep watching the .tex file and recompile if changed.
+      --wait-modify          Do not compile before the first file modification (needs --watch).
   -h, --help                 Print this help message.
 ```
 
