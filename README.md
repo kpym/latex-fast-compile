@@ -18,6 +18,8 @@ Usage: latex-fast-compile [options] filename[.tex].
       --temp-folder string   Folder to store all temp files, .fmt included.
       --watch                Keep watching the .tex file and recompile if changed.
       --wait-modify          Do not compile before the first file modification (needs --watch).
+      --info string          The info level [no|errors|errors+log|actions|debug]. (default "actions")
+      --raw-log              Display raw log in case of error.
   -h, --help                 Print this help message.
 ```
 

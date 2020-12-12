@@ -1,13 +1,16 @@
 package main
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io/ioutil"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
+	"time"
 
 	"github.com/fsnotify/fsnotify"
 	flag "github.com/spf13/pflag"
@@ -40,7 +43,7 @@ func check(e error, m ...interface{}) {
 		} else {
 			fmt.Println("Error.")
 		}
-		fmt.Printf("More info: %v\n", e)
+		fmt.Println(e)
 		// if we are in watch mode, do not halt on error
 		if !isRecompiling {
 			panic(e)
@@ -59,34 +62,65 @@ func end() {
 	os.Exit(0)
 }
 
+type infoLevelType uint8
+
+const (
+	infoNo infoLevelType = iota
+	infoErrors
+	infoErrorsAndLog
+	infoActions
+	infoDebug
+)
+
+func infoLevelFromString(info string) infoLevelType {
+	switch info {
+	case "errors":
+		return infoErrors
+	case "errors+log":
+		return infoErrorsAndLog
+	case "actions":
+		return infoActions
+	case "debug":
+		fmt.Println("Set info level to debug.")
+		return infoDebug
+	default:
+		return infoNo
+	}
+}
+
 var (
 	// flags
-	isDirtyFormat    bool
-	isDirectSource   bool
-	noSync           bool
+	mustBuildFormat  bool
+	mustCompileAll   bool
+	mustNotSync      bool
 	synctexOption    string = "--synctex=-1"
-	watchFile        bool
-	waitForEdit      bool
-	showhelp         bool
+	mustWatchFile    bool
+	mustWaitForEdit  bool
+	mustShowHelp     bool
 	tempFolderName   string
 	tempFolderOption string = ""
+	infoLevelFlag    string
+	mustUseRawLog    bool
 	// global variables
 	basename      string
 	formatbase    string
 	isRecompiling bool
+	infoLevel     infoLevelType
 	// temp variable for error catch
 	err error
 )
 
 // Set the configuration variables from the command line flags
 func SetParameters() {
-	flag.BoolVar(&isDirtyFormat, "precompile", false, "Force to create .fmt file even if it exists.")
-	flag.BoolVar(&isDirectSource, "skip-fmt", false, "Skip .fmt file and compile all.")
-	flag.BoolVar(&noSync, "no-synctex", false, "Do not build .synctex file.")
+	flag.BoolVar(&mustBuildFormat, "precompile", false, "Force to create .fmt file even if it exists.")
+	flag.BoolVar(&mustCompileAll, "skip-fmt", false, "Skip .fmt file and compile all.")
+	flag.BoolVar(&mustNotSync, "no-synctex", false, "Do not build .synctex file.")
 	flag.StringVar(&tempFolderName, "temp-folder", "", "Folder to store all temp files, .fmt included.")
-	flag.BoolVar(&watchFile, "watch", false, "Keep watching the .tex file and recompile if changed.")
-	flag.BoolVar(&waitForEdit, "wait-modify", false, "Do not compile before the first file modification (needs --watch).")
-	flag.BoolVarP(&showhelp, "help", "h", false, "Print this help message.")
+	flag.BoolVar(&mustWatchFile, "watch", false, "Keep watching the .tex file and recompile if changed.")
+	flag.BoolVar(&mustWaitForEdit, "wait-modify", false, "Do not compile before the first file modification (needs --watch).")
+	flag.StringVar(&infoLevelFlag, "info", "actions", "The info level [no|errors|errors+log|actions|debug].")
+	flag.BoolVar(&mustUseRawLog, "raw-log", false, "Display raw log in case of error.")
+	flag.BoolVarP(&mustShowHelp, "help", "h", false, "Print this help message.")
 	// keep the flags order
 	flag.CommandLine.SortFlags = false
 	// in case of error do not display second time
@@ -95,9 +129,10 @@ func SetParameters() {
 	flag.Usage = help
 	err = flag.CommandLine.Parse(os.Args[1:])
 	// display the help message if the flag is set or if there is an error
-	if showhelp || err != nil {
+	if mustShowHelp || err != nil {
 		flag.Usage()
 		check(err, "Problem parsing parameters.")
+		// if no error
 		os.Exit(0)
 	}
 
@@ -113,9 +148,11 @@ func SetParameters() {
 		tempFolderOption = "--aux-directory=" + tempFolderName
 	}
 
-	if noSync {
+	if mustNotSync {
 		synctexOption = ""
 	}
+
+	infoLevel = infoLevelFromString(infoLevelFlag)
 }
 
 // check if file is missing
@@ -127,48 +164,90 @@ func isFileMissing(filename string) bool {
 	return info.IsDir()
 }
 
+func sanitizeLog(log []byte) string {
+	re := regexp.MustCompile(`(?m)^(?:! |l.).*$`)
+	errorLines := re.FindAll(log, -1)
+	return string(bytes.Join(errorLines, []byte("\n"))) + "\n"
+}
+
 // Build, print and run command
-func run(name string, arg ...string) {
-	line := strings.Repeat("-", 77)
+func run(info, command string, args ...string) {
+	var startTime time.Time
+	var line string = strings.Repeat("-", 77)
 	// build command
-	cmd := exec.Command(name, arg...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stdout
-	// print command
-	fmt.Println(line)
-	fmt.Println(cmd.String())
-	fmt.Println(line)
+	var cmdOutput strings.Builder
+	cmd := exec.Command(command, args...)
+	cmd.Stdout = &cmdOutput
+	cmd.Stderr = &cmdOutput
+	// print command?
+	if infoLevel == infoDebug {
+		fmt.Println(line)
+		fmt.Println(cmd.String())
+		fmt.Println(line)
+	}
+	// print action?
+	if infoLevel >= infoActions {
+		startTime = time.Now()
+		fmt.Print(info + "...")
+	}
 	// run command
 	err = cmd.Run()
-	if err != nil {
-		fmt.Println("\nThe compilation finished with errors.")
-		dat, err := ioutil.ReadFile(filepath.Join(tempFolderName, basename+".log"))
-		check(err, "Problem reading ", basename+".log")
-		fmt.Print(string(dat))
+	// print time?
+	if infoLevel >= infoActions {
+		fmt.Printf("done[%.1fs]\n", time.Since(startTime).Seconds())
+	}
+	// Display the latex output?
+	if infoLevel == infoDebug {
+		fmt.Println(cmdOutput.String())
+	}
+	// if error
+	if infoLevel == infoDebug || infoLevel >= infoErrors && err != nil {
+		if err != nil {
+			fmt.Println("\nThe compilation finished with errors.")
+		}
+		if infoLevel != infoDebug && infoLevel >= infoErrorsAndLog && err != nil {
+			dat, err := ioutil.ReadFile(filepath.Join(tempFolderName, basename+".log"))
+			check(err, "Problem reading ", basename+".log")
+			fmt.Println(line)
+			if mustUseRawLog {
+				fmt.Print(string(dat))
+			} else {
+				fmt.Print(sanitizeLog(dat))
+			}
+			fmt.Println(line)
+		}
+	}
+}
+
+func info(message ...interface{}) {
+	if infoLevel >= infoActions {
+		fmt.Println(message...)
 	}
 }
 
 func recompile() {
-	if !isDirectSource && isDirtyFormat || isFileMissing(formatbase+".fmt") {
-		fmt.Println("\nprecompile ...")
-		run("etex", "-interaction=batchmode", "-halt-on-error", tempFolderOption, "-initialize", "-jobname="+basename, "&pdflatex", "mylatexformat.ltx", basename+".tex")
+	interactionOption := "-interaction=batchmode"
+	if infoLevel == infoDebug {
+		interactionOption = "-interaction=nonstopmode"
+	}
+	if !mustCompileAll && (mustBuildFormat && !isRecompiling || isFileMissing(formatbase+".fmt")) {
+		run("Precompile", "etex", interactionOption, "-halt-on-error", tempFolderOption, "-initialize", "-jobname="+basename, "&pdflatex", "mylatexformat.ltx", basename+".tex")
 	}
 
-	if isDirectSource || isFileMissing(formatbase+".fmt") {
-		if !isDirectSource {
-			fmt.Println("Oops, " + formatbase + ".fmt still missing.")
+	if mustCompileAll || isFileMissing(formatbase+".fmt") {
+		if !mustCompileAll {
+			info("Oops, " + formatbase + ".fmt still missing.")
 		}
-		fmt.Println("\nCompile all (skip precompile)")
-		run("pdflatex", "-interaction=batchmode", "-halt-on-error", synctexOption, tempFolderOption, basename+".tex")
+		run("Compile (skip precompile)", "pdflatex", interactionOption, "-halt-on-error", synctexOption, tempFolderOption, basename+".tex")
 	} else {
-		fmt.Println("\nUse precomiled " + formatbase + ".fmt")
-		run("pdflatex", "-interaction=batchmode", "-halt-on-error", synctexOption, tempFolderOption, "&"+basename, basename+".tex")
+		run("Compile (use precomiled "+formatbase+".fmt)", "pdflatex", interactionOption, "-halt-on-error", synctexOption, tempFolderOption, "&"+basename, basename+".tex")
 	}
-	fmt.Println(strings.Repeat("=", 77))
-
-	fmt.Print("End fast compile.")
+	if infoLevel == infoDebug {
+		fmt.Println(strings.Repeat("=", 77))
+		fmt.Println("End fast compile.")
+	}
 	if isRecompiling {
-		fmt.Println(" Wait for new changes ...")
+		info("Wait for new changes ...")
 	}
 	isRecompiling = false
 }
@@ -180,21 +259,20 @@ func main() {
 	SetParameters()
 	// start compiling
 	if isFileMissing(basename + ".tex") {
-		fmt.Println("file " + basename + ".tex is missing.")
-		os.Exit(1)
+		check(errors.New("file " + basename + ".tex is missing."))
 	}
 
 	formatbase = filepath.Join(tempFolderName, basename)
 
-	if !watchFile || !waitForEdit {
+	if !mustWatchFile || !mustWaitForEdit {
 		recompile()
 	}
 
-	if watchFile {
-		fmt.Println("Watching for files changes ... (to exit press Ctrl/Cmd-C).")
+	if mustWatchFile {
+		info("Watching for files changes ... (to exit press Ctrl/Cmd-C).")
 		// creates a new file watcher
 		watcher, err := fsnotify.NewWatcher()
-		check(err, "Problem with the file watcher")
+		check(err, "Problem creating the file watcher")
 		defer watcher.Close()
 
 		// stop watching ?
@@ -212,7 +290,7 @@ func main() {
 					if event.Op&fsnotify.Write == fsnotify.Write {
 						if !isRecompiling {
 							isRecompiling = true
-							fmt.Println("\nFile changed: recompiling ...")
+							info("File changed.")
 							go recompile()
 						}
 					}
@@ -220,7 +298,7 @@ func main() {
 					if !ok {
 						return
 					}
-					fmt.Println("error [fsnotify]:", err)
+					check(err, "Problem with the file watcher")
 				}
 			}
 		}()
