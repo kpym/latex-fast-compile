@@ -28,39 +28,35 @@ Usage: latex-fast-compile [options] filename[.tex].
 If we want to compile `cylinder.tex` and the file `cylinder.fmt` is missing:
 
 ```bash
-> latex-fast-compile cylinder
-
-precompile ...
------------------------------------------------------------------------------
-etex.exe -interaction=batchmode -halt-on-error -initialize -jobname=cylinder &pdflatex mylatexformat.ltx cylinder.tex
------------------------------------------------------------------------------
-This is pdfTeX, Version 3.14159265-2.6-1.40.21 (MiKTeX 20.11) (INITEX)
-entering extended mode
-
-Use precomiled cylinder.fmt
------------------------------------------------------------------------------
-pdflatex.exe -interaction=batchmode -halt-on-error --synctex=-1  &cylinder cylinder.tex
------------------------------------------------------------------------------
-This is pdfTeX, Version 3.14159265-2.6-1.40.21 (MiKTeX 20.11)
-entering extended mode
-=============================================================================
-End fast compile.
+> latex-fast-compile cylinder.tex
+Precompile...done [1.6s]
+Compile (use precomiled cylinder.fmt)...done [0.8s]
 ```
 
 And if you run it second time:
 
 ```bash
-> latex-fast-compile cylinder
-
-Use precomiled cylinder.fmt
------------------------------------------------------------------------------
-pdflatex.exe -interaction=batchmode -halt-on-error --synctex=-1  &cylinder cylinder.tex
------------------------------------------------------------------------------
-This is pdfTeX, Version 3.14159265-2.6-1.40.21 (MiKTeX 20.11)
-entering extended mode
-=============================================================================
-End fast compile.
+> latex-fast-compile cylinder.tex
+Compile (use precomiled cylinder.fmt)...done [0.7s]
 ```
+
+### watch
+
+You can start watching a file for modifications. In this case every time the file is changed it is recompiled.
+
+```bash
+> latex-fast-compile --watch cylinder.tex
+Precompile...done [1.5s]
+Compile (use precomiled cylinder.fmt)...done [0.7s]
+Watching for files changes ... (to exit press Ctrl/Cmd-C).
+File changed.
+Compile (use precomiled cylinder.fmt)...done [0.7s]
+Wait for new changes ...
+```
+
+### temps files
+
+If you want to keep your folder clean of temporary files, to put them in `temp_files` subfolder you can use `--temp-folders=temp_files`.
 
 ## Installation
 

@@ -194,7 +194,7 @@ func run(info, command string, args ...string) {
 	err = cmd.Run()
 	// print time?
 	if infoLevel >= infoActions {
-		fmt.Printf("done[%.1fs]\n", time.Since(startTime).Seconds())
+		fmt.Printf("done [%.1fs]\n", time.Since(startTime).Seconds())
 	}
 	// Display the latex output?
 	if infoLevel == infoDebug {
