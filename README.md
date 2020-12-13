@@ -1,6 +1,6 @@
 # latex-fast-compile
 
-A small executable that use `mylatexformat` to precompiled the header and speed up next compilations.
+A small executable that use `mylatexformat` to precompiled the header and speed up next compilations with `pdflatex`.
 
 ## Usage
 
@@ -40,17 +40,17 @@ Watching for files changes...(to exit press Ctrl/Cmd-C).
 3. The program waits (except if `--no-watch` is used) for new changes in the `.tex` file. At every change the source is recompiled using the precompiled header.
 
 
-### temps files
+### Temps files
 
 To keep your folder clean of temporary files, precompiled `.fmt` included, the subfolder `temp_files` is useed by default. This can be changed with `--temp-folders` flag.
 
 ### Printed information
 
-The output information is controlled by the string flags `--info` and `--log-sanitize`.
+The output information is controlled by the string flags `--info` and `--log-sanitize`. The regular expression set in `--log-sanitize`, used to sanitize the log file, follows the [go re2 syntax](https://github.com/google/re2/wiki/Syntax).
 
 ## Installation
 
-### precompiled executables
+### Precompiled executables
 
 You can download the executable for your platform from the [releases](https://github.com/kpym/latex-fast-compile/releases).
 
