@@ -165,7 +165,7 @@ func isFileMissing(filename string) bool {
 }
 
 func sanitizeLog(log []byte) string {
-	re := regexp.MustCompile(`(?m)^(?:! |l.).*$`)
+	re := regexp.MustCompile(`(?m)^(?:! |l.|<recently read> ).*$`)
 	errorLines := re.FindAll(log, -1)
 	return string(bytes.Join(errorLines, []byte("\n"))) + "\n"
 }
