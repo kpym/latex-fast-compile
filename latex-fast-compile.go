@@ -264,6 +264,14 @@ func main() {
 	defer end()
 	// The flags
 	SetParameters()
+	// check if pdflatex is present
+	path, err := exec.LookPath("pdflatex")
+	if err != nil {
+		check(errors.New("Can't find pdflatex in the current path."))
+	}
+	if infoLevel == infoDebug {
+		fmt.Println("Will use pdflatex available at", path)
+	}
 	// start compiling
 	if isFileMissing(basename + ".tex") {
 		check(errors.New("file " + basename + ".tex is missing."))
