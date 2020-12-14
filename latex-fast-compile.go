@@ -7,8 +7,10 @@ import (
 	"io/ioutil"
 	"os"
 	"os/exec"
+	"os/signal"
 	"regexp"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
@@ -387,6 +389,12 @@ func recompile() {
 
 // This is the last function executed in this program.
 func end() {
+	if infoLevel < infoDebug {
+		clearTeX()
+	} else {
+		fmt.Println("Do not clear", baseName+".preamble.tex", "and", baseName+".body.tex.")
+		fmt.Println("End.")
+	}
 	// in case of error return status is 1
 	if r := recover(); r != nil {
 		os.Exit(1)
@@ -396,16 +404,26 @@ func end() {
 	os.Exit(0)
 }
 
+// If we terminate with Ctrl/Cmd-C we call end()
+func catchCtrlC() {
+	c := make(chan os.Signal)
+	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		<-c
+		end()
+	}()
+}
+
+// Ready to go!
 func main() {
 	// error handling
+	catchCtrlC()
 	defer end()
 	// The flags
 	SetParameters()
 	// prepare the source files
 	splitTeX()
-	if infoLevel < infoDebug {
-		defer clearTeX()
-	}
+
 	// create .fmt (if needed)
 	precompile()
 	// start compiling
