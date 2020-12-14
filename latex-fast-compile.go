@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"syscall"
@@ -103,10 +104,12 @@ var (
 	infoLevelFlag      string
 	logSanitize        string
 	splitPattern       string
+	tempFolderName     string
 	// global variables
 	texDistro         string
 	texVersionStr     string
 	baseName          string
+	formatName        string
 	isRecompiling     bool
 	infoLevel         infoLevelType
 	reSanitize        *regexp.Regexp
@@ -156,12 +159,14 @@ func SetParameters() {
 	flag.BoolVar(&mustBuildFormat, "precompile", false, "Force to create .fmt file even if it exists.")
 	flag.BoolVar(&mustCompileAll, "skip-fmt", false, "Skip .fmt file and compile all.")
 	flag.BoolVar(&mustNotSync, "no-synctex", false, "Do not build .synctex file.")
-	// flag.StringVar(&tempFolderName, "temp-folder", "temp_files", "Folder to store all temp files, .fmt included.")
 	flag.BoolVar(&mustNoWatch, "no-watch", false, "Do not watch for file changes in the .tex file.")
 	flag.IntVar(&numCompilesAtStart, "compiles-at-start", 1, "Number of compiles before to start watching.")
 	flag.StringVar(&infoLevelFlag, "info", "actions", "The info level [no|errors|errors+log|actions|debug].")
 	flag.StringVar(&logSanitize, "log-sanitize", `(?m)^(?:! |l\.|<recently read> ).*$`, "Match the log against this regex before display, or display all if empty.\n")
 	flag.StringVar(&splitPattern, "split", `(?m)^\s*(?:%\s*end\s*preamble|\\begin{document})\s*$`, "Match the log against this regex before display, or display all if empty.\n")
+	if texDistro == "miktex" {
+		flag.StringVar(&tempFolderName, "temp-folder", "temp_files", "Folder to store all temp files, .fmt included [MikTeX only].")
+	}
 	flag.BoolVarP(&mustShowVersion, "version", "v", false, "Print the version number.")
 	flag.BoolVarP(&mustShowHelp, "help", "h", false, "Print this help message.")
 	// keep the flags order
@@ -236,6 +241,13 @@ func SetParameters() {
 	} else {
 		mustCompileAll = true
 	}
+	// set temp folder?
+	formatName = baseName
+	if len(tempFolderName) > 0 {
+		compileOptions = append(compileOptions, "-aux-directory="+tempFolderName)
+		precompileOptions = append(precompileOptions, "-aux-directory="+tempFolderName)
+		formatName = filepath.Join(tempFolderName, baseName)
+	}
 
 	// set the source filename
 	var sourceName string
@@ -250,8 +262,10 @@ func SetParameters() {
 
 // check if file is missing
 func isFileMissing(filename string) bool {
+	fmt.Println("Check", filename)
 	info, err := os.Stat(filename)
 	if os.IsNotExist(err) {
+		fmt.Println("Missing")
 		return true
 	}
 	return info.IsDir()
@@ -312,8 +326,8 @@ func run(info, command string, args ...string) {
 			fmt.Println("\nThe compilation finished with errors.")
 		}
 		if infoLevel >= infoErrorsAndLog {
-			dat, err := ioutil.ReadFile(baseName + ".log")
-			check(err, "Problem reading ", baseName+".log")
+			dat, err := ioutil.ReadFile(formatName + ".log")
+			check(err, "Problem reading ", formatName+".log")
 			fmt.Println(sanitizeLog(dat))
 		}
 	}
@@ -363,7 +377,8 @@ func clearTeX() {
 }
 
 func precompile() {
-	if mustBuildFormat || !mustCompileAll && isFileMissing(baseName+".fmt") {
+	if mustBuildFormat || !mustCompileAll && isFileMissing(formatName+".fmt") {
+		fmt.Println(mustBuildFormat, mustCompileAll, isFileMissing(formatName+".fmt"))
 		run("Precompile", "pdflatex", precompileOptions...)
 	}
 }
@@ -373,7 +388,7 @@ func compile() {
 	if mustCompileAll {
 		msg += "(skip precompile)"
 	} else {
-		msg += "(use precomiled " + baseName + ".fmt)"
+		msg += "(use precomiled " + formatName + ".fmt)"
 	}
 	run(msg, "pdflatex", compileOptions...)
 	if isRecompiling {

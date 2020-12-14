@@ -1,6 +1,6 @@
 # latex-fast-compile
 
-A small executable that use `mylatexformat` to precompiled the header and speed up next compilations with `pdflatex`.
+A small executable that pre-compile the preamble to speed up future compilations (with `pdflatex`). Then, it watches for file changes, and automatically recompile the source `.tex` file using this precompiled preamble.
 
 ## Usage
 
@@ -15,12 +15,15 @@ Usage: latex-fast-compile [options] filename[.tex].
       --precompile              Force to create .fmt file even if it exists.
       --skip-fmt                Skip .fmt file and compile all.
       --no-synctex              Do not build .synctex file.
-      --temp-folder string      Folder to store all temp files, .fmt included. (default "temp_files")
       --no-watch                Do not watch for file changes in the .tex file.
       --compiles-at-start int   Number of compiles before to start watching. (default 1)
       --info string             The info level [no|errors|errors+log|actions|debug]. (default "actions")
       --log-sanitize string     Match the log against this regex before display, or display all if empty.
-                                 (default "(?m)^(?:! |l.|<recently read> ).*$")
+                                 (default "(?m)^(?:! |l\\.|<recently read> ).*$")
+      --split string            Match the log against this regex before display, or display all if empty.
+                                 (default "(?m)^\\s*(?:%\\s*end\\s*preamble|\\\\begin{document})\\s*$")
+      --temp-folder string      Folder to store all temp files, .fmt included [MikTeX only]. (default "temp_files")
+  -v, --version                 Print the version number.
   -h, --help                    Print this help message.
 ```
 
@@ -31,7 +34,7 @@ To compile `cylinder.tex` you can simply use:
 ```bash
 > latex-fast-compile cylinder.text
 Precompile...done [1.4s]
-Compile (use precompiled temp_files\cylinder.fmt)...done [0.7s]
+Compile (use precompiled cylinder.fmt)...done [0.7s]
 Watching for files changes...(to exit press Ctrl/Cmd-C).
 ```
 
@@ -48,6 +51,10 @@ To keep your folder clean of temporary files, precompiled `.fmt` included, the s
 
 The output information is controlled by the string flags `--info` and `--log-sanitize`. The regular expression set in `--log-sanitize`, used to sanitize the log file, follows the [go re2 syntax](https://github.com/google/re2/wiki/Syntax).
 
+### How it works
+
+The `.tex` file is split into two files `.preamble.tex` and `.body.tex`. The file is split at `% end preamble` comment or at `\begin{document}` (which comes first). The file `.preamble.tex` is precompiled to `.fmt` only if needed. The file `.body.tex` is compiled usinf this `.fmt` file to `.pdf`.
+
 ## Installation
 
 ### Precompiled executables
@@ -58,7 +65,7 @@ You can download the executable for your platform from the [releases](https://gi
 
 #### Using Go
 
-This method will comile to executable named `latex-fast-compile`.
+This method will compile to executable named `latex-fast-compile`.
 
 ```shell
 $ go get github.com/kpym/latex-fast-compile
@@ -73,7 +80,7 @@ git clone https://github.com/kpym/latex-fast-compile.git .
 goreleaser --snapshot --skip-publish --rm-dist
 ```
 
-You will find the resulting binaries in the `dist/` subfolder.
+You will find the resulting binaries in the `dist/` sub-folder.
 
 ## License
 
