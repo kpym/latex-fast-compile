@@ -20,7 +20,17 @@ import (
 var version string = "--"
 
 // Display the usage help message
-func help() {
+func printVersion() {
+	// get the default error output
+	var out = flag.CommandLine.Output()
+	// write the help message
+	fmt.Fprintf(out, "version: %s\n", version)
+	fmt.Fprintf(out, "tex distribution: %s\n", texDistro)
+	fmt.Fprintf(out, "pdflatex version: %s\n", texVersionStr)
+}
+
+// Display the usage help message
+func printHelp() {
 	// get the default error output
 	var out = flag.CommandLine.Output()
 	// write the help message
@@ -100,11 +110,14 @@ var (
 	mustNoWatch        bool
 	numCompilesAtStart int
 	mustShowHelp       bool
+	mustShowVersion    bool
 	tempFolderName     string
 	tempFolderOption   string = ""
 	infoLevelFlag      string
 	logSanitize        string
 	// global variables
+	texDistro     string
+	texVersionStr string
 	basename      string
 	formatbase    string
 	isRecompiling bool
@@ -114,29 +127,69 @@ var (
 	err error
 )
 
+func getTeXVersion() string {
+	// build command
+	var cmdOutput strings.Builder
+	cmd := exec.Command("pdflatex", "--version")
+	cmd.Stdout = &cmdOutput
+	cmd.Stderr = &cmdOutput
+	// print command?
+	if infoLevel == infoDebug {
+		fmt.Println(delimit("command", cmd.String()))
+	}
+	// run command
+	err = cmd.Run()
+	linesOutput := strings.Split(cmdOutput.String(), "\n")
+	if err != nil || len(linesOutput) == 0 {
+		return ""
+	}
+
+	return strings.TrimSpace(linesOutput[0])
+}
+
+func setTeXVersion() {
+	texVersionStr = getTeXVersion()
+	if strings.Contains(texVersionStr, "MiKTeX") {
+		texDistro = "miktex"
+	}
+	if strings.Contains(texVersionStr, "TeX Live") {
+		texDistro = "texlive"
+	}
+}
+
 // Set the configuration variables from the command line flags
 func SetParameters() {
+	setTeXVersion()
 	flag.BoolVar(&mustBuildFormat, "precompile", false, "Force to create .fmt file even if it exists.")
 	flag.BoolVar(&mustCompileAll, "skip-fmt", false, "Skip .fmt file and compile all.")
 	flag.BoolVar(&mustNotSync, "no-synctex", false, "Do not build .synctex file.")
-	flag.StringVar(&tempFolderName, "temp-folder", "temp_files", "Folder to store all temp files, .fmt included.")
+	if texDistro == "miktex" {
+		flag.StringVar(&tempFolderName, "temp-folder", "temp_files", "Folder to store all temp files, .fmt included.")
+	}
 	flag.BoolVar(&mustNoWatch, "no-watch", false, "Do not watch for file changes in the .tex file.")
 	flag.IntVar(&numCompilesAtStart, "compiles-at-start", 1, "Number of compiles before to start watching.")
 	flag.StringVar(&infoLevelFlag, "info", "actions", "The info level [no|errors|errors+log|actions|debug].")
 	flag.StringVar(&logSanitize, "log-sanitize", "(?m)^(?:! |l.|<recently read> ).*$", "Match the log against this regex before display, or display all if empty.\n")
+	flag.BoolVarP(&mustShowVersion, "version", "v", false, "Print the version number.")
 	flag.BoolVarP(&mustShowHelp, "help", "h", false, "Print this help message.")
 	// keep the flags order
 	flag.CommandLine.SortFlags = false
 	// in case of error do not display second time
 	flag.CommandLine.Init("latex-fast-compile", flag.ContinueOnError)
 	// The help message
-	flag.Usage = help
+	flag.Usage = printHelp
 	err = flag.CommandLine.Parse(os.Args[1:])
 	// display the help message if the flag is set or if there is an error
 	if mustShowHelp || err != nil {
 		flag.Usage()
 		check(err, "Problem parsing parameters.")
 		// if no error
+		os.Exit(0)
+	}
+	setTeXVersion()
+	// display the version?
+	if mustShowVersion {
+		printVersion()
 		os.Exit(0)
 	}
 
@@ -162,6 +215,26 @@ func SetParameters() {
 	}
 
 	infoLevel = infoLevelFromString(infoLevelFlag)
+
+	// check if pdflatex is present
+	if len(texDistro) == 0 {
+		if len(texVersionStr) == 0 {
+			check(errors.New("Can't find pdflatex in the current path."))
+		} else {
+			if infoLevel > infoNo {
+				fmt.Println("Unknown pdftex version:", texVersionStr)
+			}
+		}
+	}
+	if infoLevel == infoDebug {
+		printVersion()
+		pathPDFLatex, err := exec.LookPath("pdflatex")
+		if err != nil {
+			// We should never be here
+			check(errors.New("Can't find pdflatex in the current path (bis)."))
+		}
+		fmt.Println("pdflatex location:", pathPDFLatex)
+	}
 }
 
 // check if file is missing
@@ -264,14 +337,6 @@ func main() {
 	defer end()
 	// The flags
 	SetParameters()
-	// check if pdflatex is present
-	path, err := exec.LookPath("pdflatex")
-	if err != nil {
-		check(errors.New("Can't find pdflatex in the current path."))
-	}
-	if infoLevel == infoDebug {
-		fmt.Println("Will use pdflatex available at", path)
-	}
 	// start compiling
 	if isFileMissing(basename + ".tex") {
 		check(errors.New("file " + basename + ".tex is missing."))
