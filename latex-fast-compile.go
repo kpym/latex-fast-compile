@@ -262,10 +262,8 @@ func SetParameters() {
 
 // check if file is missing
 func isFileMissing(filename string) bool {
-	fmt.Println("Check", filename)
 	info, err := os.Stat(filename)
 	if os.IsNotExist(err) {
-		fmt.Println("Missing")
 		return true
 	}
 	return info.IsDir()
@@ -378,7 +376,6 @@ func clearTeX() {
 
 func precompile() {
 	if mustBuildFormat || !mustCompileAll && isFileMissing(formatName+".fmt") {
-		fmt.Println(mustBuildFormat, mustCompileAll, isFileMissing(formatName+".fmt"))
 		run("Precompile", "pdflatex", precompileOptions...)
 	}
 }
