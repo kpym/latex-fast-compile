@@ -7,7 +7,6 @@ import (
 	"io/ioutil"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -61,17 +60,6 @@ func check(e error, m ...interface{}) {
 	}
 }
 
-// This is the last function executed in this program.
-func end() {
-	// in case of error return status is 1
-	if r := recover(); r != nil {
-		os.Exit(1)
-	}
-
-	// the normal return status is 0
-	os.Exit(0)
-}
-
 type infoLevelType uint8
 
 const (
@@ -106,23 +94,23 @@ var (
 	mustBuildFormat    bool
 	mustCompileAll     bool
 	mustNotSync        bool
-	synctexOption      string = "--synctex=-1"
 	mustNoWatch        bool
 	numCompilesAtStart int
 	mustShowHelp       bool
 	mustShowVersion    bool
-	tempFolderName     string
-	tempFolderOption   string = ""
 	infoLevelFlag      string
 	logSanitize        string
+	splitPattern       string
 	// global variables
-	texDistro     string
-	texVersionStr string
-	basename      string
-	formatbase    string
-	isRecompiling bool
-	infoLevel     infoLevelType
-	reSanitize    *regexp.Regexp
+	texDistro         string
+	texVersionStr     string
+	baseName          string
+	isRecompiling     bool
+	infoLevel         infoLevelType
+	reSanitize        *regexp.Regexp
+	reSplit           *regexp.Regexp
+	precompileOptions []string
+	compileOptions    []string
 	// temp variable for error catch
 	err error
 )
@@ -147,7 +135,7 @@ func getTeXVersion() string {
 	return strings.TrimSpace(linesOutput[0])
 }
 
-func setTeXVersion() {
+func setDistro() {
 	texVersionStr = getTeXVersion()
 	if strings.Contains(texVersionStr, "MiKTeX") {
 		texDistro = "miktex"
@@ -155,21 +143,23 @@ func setTeXVersion() {
 	if strings.Contains(texVersionStr, "TeX Live") {
 		texDistro = "texlive"
 	}
+
+	precompileOptions = []string{"-interaction=batchmode", "-halt-on-error", "-ini"}
+	compileOptions = []string{"-interaction=batchmode", "-halt-on-error"}
 }
 
 // Set the configuration variables from the command line flags
 func SetParameters() {
-	setTeXVersion()
+	setDistro()
 	flag.BoolVar(&mustBuildFormat, "precompile", false, "Force to create .fmt file even if it exists.")
 	flag.BoolVar(&mustCompileAll, "skip-fmt", false, "Skip .fmt file and compile all.")
 	flag.BoolVar(&mustNotSync, "no-synctex", false, "Do not build .synctex file.")
-	if texDistro == "miktex" {
-		flag.StringVar(&tempFolderName, "temp-folder", "temp_files", "Folder to store all temp files, .fmt included.")
-	}
+	// flag.StringVar(&tempFolderName, "temp-folder", "temp_files", "Folder to store all temp files, .fmt included.")
 	flag.BoolVar(&mustNoWatch, "no-watch", false, "Do not watch for file changes in the .tex file.")
 	flag.IntVar(&numCompilesAtStart, "compiles-at-start", 1, "Number of compiles before to start watching.")
 	flag.StringVar(&infoLevelFlag, "info", "actions", "The info level [no|errors|errors+log|actions|debug].")
-	flag.StringVar(&logSanitize, "log-sanitize", "(?m)^(?:! |l.|<recently read> ).*$", "Match the log against this regex before display, or display all if empty.\n")
+	flag.StringVar(&logSanitize, "log-sanitize", `(?m)^(?:! |l\.|<recently read> ).*$`, "Match the log against this regex before display, or display all if empty.\n")
+	flag.StringVar(&splitPattern, "split", `(?m)^\s*(?:%\s*end\s*preamble|\\begin{document})\s*$`, "Match the log against this regex before display, or display all if empty.\n")
 	flag.BoolVarP(&mustShowVersion, "version", "v", false, "Print the version number.")
 	flag.BoolVarP(&mustShowHelp, "help", "h", false, "Print this help message.")
 	// keep the flags order
@@ -186,7 +176,10 @@ func SetParameters() {
 		// if no error
 		os.Exit(0)
 	}
-	setTeXVersion()
+	// set the info level
+	infoLevel = infoLevelFromString(infoLevelFlag)
+	// set the distro based on the pdflatex version
+	setDistro()
 	// display the version?
 	if mustShowVersion {
 		printVersion()
@@ -200,21 +193,19 @@ func SetParameters() {
 	if flag.NArg() == 0 {
 		check(errors.New("You should provide a .tex file to compile."))
 	}
-	basename = strings.TrimSuffix(flag.Arg(0), ".tex")
-	if len(tempFolderName) > 0 {
-		tempFolderOption = "--aux-directory=" + tempFolderName
+
+	baseName = strings.TrimSuffix(flag.Arg(0), ".tex")
+
+	// synctex or not?
+	if !mustNotSync {
+		compileOptions = append(compileOptions, "--synctex=-1")
 	}
 
-	if mustNotSync {
-		synctexOption = ""
-	}
-
+	// sanitize log or not?
 	if len(logSanitize) > 0 {
 		reSanitize, err = regexp.Compile(logSanitize)
 		check(err)
 	}
-
-	infoLevel = infoLevelFromString(infoLevelFlag)
 
 	// check if pdflatex is present
 	if len(texDistro) == 0 {
@@ -235,6 +226,24 @@ func SetParameters() {
 		}
 		fmt.Println("pdflatex location:", pathPDFLatex)
 	}
+
+	// set split pattern
+	if len(splitPattern) > 0 {
+		reSplit, err = regexp.Compile(splitPattern)
+		check(err)
+	} else {
+		mustCompileAll = true
+	}
+
+	// set the source filename
+	var sourceName string
+	if mustCompileAll {
+		sourceName = baseName + ".tex"
+	} else {
+		sourceName = "&" + baseName + " " + baseName + ".body.tex"
+	}
+	compileOptions = append(compileOptions, "-jobname="+baseName, sourceName)
+	precompileOptions = append(precompileOptions, "-jobname="+baseName, "&pdflatex "+baseName+".preamble.tex")
 }
 
 // check if file is missing
@@ -244,6 +253,12 @@ func isFileMissing(filename string) bool {
 		return true
 	}
 	return info.IsDir()
+}
+
+// check if file is missing
+func isFolderMissing(foldername string) bool {
+	info, err := os.Stat(foldername)
+	return err != nil || !info.IsDir()
 }
 
 func delimit(what, msg string) string {
@@ -269,11 +284,11 @@ func sanitizeLog(log []byte) string {
 // Build, print and run command
 func run(info, command string, args ...string) {
 	var startTime time.Time
-	// build command
-	var cmdOutput strings.Builder
+	// build command (without possible interactions)
 	cmd := exec.Command(command, args...)
-	cmd.Stdout = &cmdOutput
-	cmd.Stderr = &cmdOutput
+	cmd.Stdin = nil
+	cmd.Stdout = nil
+	cmd.Stderr = nil
 	// print command?
 	if infoLevel == infoDebug {
 		fmt.Println(delimit("command", cmd.String()))
@@ -295,8 +310,8 @@ func run(info, command string, args ...string) {
 			fmt.Println("\nThe compilation finished with errors.")
 		}
 		if infoLevel >= infoErrorsAndLog {
-			dat, err := ioutil.ReadFile(filepath.Join(tempFolderName, basename+".log"))
-			check(err, "Problem reading ", basename+".log")
+			dat, err := ioutil.ReadFile(baseName + ".log")
+			check(err, "Problem reading ", baseName+".log")
 			fmt.Println(sanitizeLog(dat))
 		}
 	}
@@ -308,28 +323,77 @@ func info(message ...interface{}) {
 	}
 }
 
+func splitTeX() {
+	sourceName := baseName + ".tex"
+	// do I have to do something?
+	if !mustBuildFormat && mustCompileAll {
+		if isFileMissing(sourceName) {
+			check(errors.New("File " + sourceName + " is missing."))
+		}
+		return
+	}
+	// read the file
+	texdata, err := ioutil.ReadFile(sourceName)
+	check(err, "Problem reading "+sourceName+" for splitting.")
+	// split the file
+	loc := reSplit.FindIndex(texdata)
+	if len(loc) == 0 {
+		check(errors.New("Problem while splitting " + sourceName + " to preamble and body."))
+	}
+	// important to first get body because textdata is polluted by \dump in the next line
+	bodyName := baseName + ".body.tex"
+	texBody := append([]byte("\n%&"+baseName+"\n"), texdata[loc[0]:]...)
+	ioutil.WriteFile(bodyName, texBody, 0644)
+
+	preambleName := baseName + ".preamble.tex"
+	texPreamble := append(texdata[:loc[0]], []byte("\\dump")...)
+	ioutil.WriteFile(preambleName, texPreamble, 0644)
+
+	// manage preamble hash
+	// hashNewPreamble := md5.Sum(texPreamble)
+	// changed = bytes.Equal(hashNewPreamble[:], hashPreamble[:])
+	// copy(hashPreamble, hashNewPreamble)
+}
+
+func clearTeX() {
+	os.Remove(baseName + ".preamble.tex")
+	os.Remove(baseName + ".body.tex")
+}
+
 func precompile() {
-	if mustBuildFormat || !mustCompileAll && isFileMissing(formatbase+".fmt") {
-		run("Precompile", "etex", "-interaction=batchmode", "-halt-on-error", tempFolderOption, "-initialize", "-jobname="+basename, "&pdflatex", "mylatexformat.ltx", basename+".tex")
+	if mustBuildFormat || !mustCompileAll && isFileMissing(baseName+".fmt") {
+		run("Precompile", "pdflatex", precompileOptions...)
 	}
 }
 
-func recompile() {
-	if mustCompileAll || isFileMissing(formatbase+".fmt") {
-		if !mustCompileAll {
-			info("Oops, " + formatbase + ".fmt is missing.")
-		}
-		run("Compile (skip precompile)", "pdflatex", "-interaction=batchmode", "-halt-on-error", synctexOption, tempFolderOption, basename+".tex")
+func compile() {
+	msg := "Compile "
+	if mustCompileAll {
+		msg += "(skip precompile)"
 	} else {
-		run("Compile (use precomiled "+formatbase+".fmt)", "pdflatex", "-interaction=batchmode", "-halt-on-error", synctexOption, tempFolderOption, "&"+basename, basename+".tex")
+		msg += "(use precomiled " + baseName + ".fmt)"
 	}
-	if infoLevel == infoDebug {
-		fmt.Println("End fast compile.")
-	}
+	run(msg, "pdflatex", compileOptions...)
 	if isRecompiling {
 		info("Wait for new changes...")
 	}
 	isRecompiling = false
+}
+
+func recompile() {
+	splitTeX()
+	compile()
+}
+
+// This is the last function executed in this program.
+func end() {
+	// in case of error return status is 1
+	if r := recover(); r != nil {
+		os.Exit(1)
+	}
+
+	// the normal return status is 0
+	os.Exit(0)
 }
 
 func main() {
@@ -337,18 +401,18 @@ func main() {
 	defer end()
 	// The flags
 	SetParameters()
-	// start compiling
-	if isFileMissing(basename + ".tex") {
-		check(errors.New("file " + basename + ".tex is missing."))
+	// prepare the source files
+	splitTeX()
+	if infoLevel < infoDebug {
+		defer clearTeX()
 	}
-
-	formatbase = filepath.Join(tempFolderName, basename)
+	// create .fmt (if needed)
 	precompile()
-
+	// start compiling
 	for i := 0; i < numCompilesAtStart; i++ {
-		recompile()
+		compile()
 	}
-
+	// watching ?
 	if !mustNoWatch {
 		info("Watching for files changes...(to exit press Ctrl/Cmd-C).")
 		// creates a new file watcher
@@ -385,8 +449,8 @@ func main() {
 		}()
 
 		// out of the box fsnotify can watch a single file, or a single directory
-		err = watcher.Add(basename + ".tex")
-		check(err, "Problem watching", basename+".tex")
+		err = watcher.Add(baseName + ".tex")
+		check(err, "Problem watching", baseName+".tex")
 
 		<-done
 	}
