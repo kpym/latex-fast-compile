@@ -32,28 +32,29 @@ Usage: latex-fast-compile [options] filename[.tex].
 To compile `cylinder.tex` you can simply use:
 
 ```bash
-> latex-fast-compile cylinder.text
+> latex-fast-compile cylinder.tex
 Precompile...done [1.4s]
 Compile (use precompiled cylinder.fmt)...done [0.7s]
 Watching for files changes...(to exit press Ctrl/Cmd-C).
 ```
 
-1. First if the precompiled header is missing (`cylinder.fmt` is missing in our case) the header is precompiled and stored in the temp folder (by default `temp_files`).
-2. The file is compiled using the precompiled header (`cylinder.fmt` in our case).
+1. First if the precompiled header is missing (`cylinder.fmt` is missing in our case) the header is precompiled.
+2. The file is compiled using this precompiled header (`cylinder.fmt` in our case).
 3. The program waits (except if `--no-watch` is used) for new changes in the `.tex` file. At every change the source is recompiled using the precompiled header.
 
+### How it works
 
-### Temps files
+The `.tex` file is split into two files `.preamble.tex` and `.body.tex`. The file is split at `% end preamble` comment or at `\begin{document}` (which comes first). The file `.preamble.tex` is precompiled to `.fmt` only if needed. The file `.body.tex` is compiled using this `.fmt` file to `.pdf`.
 
-To keep your folder clean of temporary files, precompiled `.fmt` included, the subfolder `temp_files` is useed by default. This can be changed with `--temp-folders` flag.
+The split point is controlled by the regular expression defined in the `--split` flag. This regular expression follows the [go re2 syntax](https://github.com/google/re2/wiki/Syntax).
 
 ### Printed information
 
 The output information is controlled by the string flags `--info` and `--log-sanitize`. The regular expression set in `--log-sanitize`, used to sanitize the log file, follows the [go re2 syntax](https://github.com/google/re2/wiki/Syntax).
 
-### How it works
+### MikTeX specific
 
-The `.tex` file is split into two files `.preamble.tex` and `.body.tex`. The file is split at `% end preamble` comment or at `\begin{document}` (which comes first). The file `.preamble.tex` is precompiled to `.fmt` only if needed. The file `.body.tex` is compiled usinf this `.fmt` file to `.pdf`.
+To keep your folder clean of temporary files, precompiled `.fmt` included, the subfolder `temp_files` is useed by default. This can be changed with `--temp-folders` flag.
 
 ## Installation
 
