@@ -28,7 +28,7 @@ func printVersion() {
 	// write the help message
 	fmt.Fprintf(out, "version: %s\n", version)
 	fmt.Fprintf(out, "tex distribution: %s\n", texDistro)
-	fmt.Fprintf(out, "pdflatex version: %s\n", texVersionStr)
+	fmt.Fprintf(out, "pdftex version: %s\n", texVersionStr)
 }
 
 // Display the usage help message
@@ -63,6 +63,7 @@ func check(e error, m ...interface{}) {
 	}
 }
 
+// the infoLevel type and constants
 type infoLevelType uint8
 
 const (
@@ -73,8 +74,11 @@ const (
 	infoDebug
 )
 
+// convert the flag `--info` flag to the corresponding level.
 func infoLevelFromString(info string) infoLevelType {
 	switch info {
+	case "no":
+		return infoNo
 	case "errors":
 		return infoErrors
 	case "errors+log":
@@ -84,8 +88,6 @@ func infoLevelFromString(info string) infoLevelType {
 	case "debug":
 		fmt.Println("Set info level to debug.")
 		return infoDebug
-	case "no":
-		return infoNo
 	default:
 		check(errors.New("Invalid info level."))
 		return infoDebug
@@ -123,10 +125,11 @@ var (
 	err error
 )
 
+// getTeXVersion return the first line from `pdftex --version`
 func getTeXVersion() string {
 	// build command
 	var cmdOutput strings.Builder
-	cmd := exec.Command("pdflatex", "--version")
+	cmd := exec.Command("pdftex", "--version")
 	cmd.Stdout = &cmdOutput
 	cmd.Stderr = &cmdOutput
 	// print command?
@@ -143,6 +146,7 @@ func getTeXVersion() string {
 	return strings.TrimSpace(linesOutput[0])
 }
 
+// Try to recognize the distribution based on the pdftex version.
 func setDistro() {
 	texVersionStr = getTeXVersion()
 	if strings.Contains(texVersionStr, "MiKTeX") {
@@ -166,7 +170,7 @@ func SetParameters() {
 	flag.IntVar(&numCompilesAtStart, "compiles-at-start", 1, "Number of compiles before to start watching.")
 	flag.StringVar(&infoLevelFlag, "info", "actions", "The info level [no|errors|errors+log|actions|debug].")
 	flag.StringVar(&logSanitize, "log-sanitize", `(?m)^(?:! |l\.|<recently read> ).*$`, "Match the log against this regex before display, or display all if empty.\n")
-	flag.StringVar(&splitPattern, "split", `(?m)^\s*(?:%\s*end\s*preamble|\\begin{document})\s*$`, "Match the log against this regex before display, or display all if empty.\n")
+	flag.StringVar(&splitPattern, "split", `(?m)^\s*(?:%\s*end\s*preamble|\\begin{document})`, "Match the log against this regex before display, or display all if empty.\n")
 	if texDistro == "miktex" {
 		flag.StringVar(&tempFolderName, "temp-folder", "temp_files", "Folder to store all temp files, .fmt included [MikTeX only].")
 	}
@@ -190,7 +194,7 @@ func SetParameters() {
 	}
 	// set the info level
 	infoLevel = infoLevelFromString(infoLevelFlag)
-	// set the distro based on the pdflatex version
+	// set the distro based on the pdftex version
 	setDistro()
 	// display the version?
 	if mustShowVersion {
@@ -219,10 +223,10 @@ func SetParameters() {
 		check(err)
 	}
 
-	// check if pdflatex is present
+	// check if pdftex is present
 	if len(texDistro) == 0 {
 		if len(texVersionStr) == 0 {
-			check(errors.New("Can't find pdflatex in the current path."))
+			check(errors.New("Can't find pdftex in the current path."))
 		} else {
 			if infoLevel > infoNo {
 				fmt.Println("Unknown pdftex version:", texVersionStr)
@@ -231,12 +235,12 @@ func SetParameters() {
 	}
 	if infoLevel == infoDebug {
 		printVersion()
-		pathPDFLatex, err := exec.LookPath("pdflatex")
+		pathPDFLatex, err := exec.LookPath("pdftex")
 		if err != nil {
 			// We should never be here
-			check(errors.New("Can't find pdflatex in the current path (bis)."))
+			check(errors.New("Can't find pdftex in the current path (bis)."))
 		}
-		fmt.Println("pdflatex location:", pathPDFLatex)
+		fmt.Println("pdftex location:", pathPDFLatex)
 	}
 
 	// set split pattern
@@ -283,11 +287,18 @@ func isFolderMissing(foldername string) bool {
 	return err != nil || !info.IsDir()
 }
 
+// delimit produce something like
+// ---------------------- what
+// msg
+// ----------------------
+// and is used to delimit log output and commands when debugging
 func delimit(what, msg string) string {
 	var line string = strings.Repeat("-", 77)
 	return line + " " + what + "\n" + msg + "\n" + line
 }
 
+// sanitizeLog try to keep only the lines related to the errors.
+// It is controlled by the regular expression set in `--log-sanitize`.
 func sanitizeLog(log []byte) string {
 
 	if reSanitize == nil {
@@ -303,7 +314,8 @@ func sanitizeLog(log []byte) string {
 
 }
 
-// Build, print and run command
+// Build, print and run command.
+// The info parameter is printed if the infoLevel authorize this.
 func run(info, command string, args ...string) {
 	var startTime time.Time
 	// build command (without possible interactions)
@@ -339,45 +351,66 @@ func run(info, command string, args ...string) {
 	}
 }
 
+// info print the message only if the infoLevel authorize it.
 func info(message ...interface{}) {
 	if infoLevel >= infoActions {
 		fmt.Println(message...)
 	}
 }
 
-func splitTeX() {
+// splitTeX split the `.tex` file to two files `.preamble.tex` and `.body.tex`.
+// it also append `\dump` to the preamble and perpend `%&...` to the body.
+// both files are saved in the same folder (not in the temporary one) as the original source.
+func splitTeX() (ok bool) {
 	sourceName := baseName + ".tex"
 	// do I have to do something?
 	if !mustBuildFormat && mustCompileAll {
 		if isFileMissing(sourceName) {
 			check(errors.New("File " + sourceName + " is missing."))
 		}
-		return
+		return true
 	}
 	// read the file
-	texdata, err := ioutil.ReadFile(sourceName)
-	check(err, "Problem reading "+sourceName+" for splitting.")
+	var texdata []byte
+	for i := 0; i < 2; i++ {
+		texdata, err = ioutil.ReadFile(sourceName)
+		check(err, "Problem reading "+sourceName+" for splitting.")
+		if len(texdata) == 0 {
+			if i == 0 {
+				info("Problem reading " + sourceName + " for splitting. Try one more time.")
+				time.Sleep(100 * time.Millisecond)
+			} else {
+				check(errors.New("Problem reading " + sourceName + " for splitting."))
+				return false
+			}
+		} else {
+			break
+		}
+	}
 	// split the file
 	loc := reSplit.FindIndex(texdata)
 	if len(loc) == 0 {
 		check(errors.New("Problem while splitting " + sourceName + " to preamble and body."))
+		return false
 	}
 	// important to first get body because textdata is polluted by \dump in the next line
 	bodyName := baseName + ".body.tex"
 	texBody := append([]byte("\n%&"+baseName+"\n"), texdata[loc[0]:]...)
-	ioutil.WriteFile(bodyName, texBody, 0644)
+	err = ioutil.WriteFile(bodyName, texBody, 0644)
+	check(err, "Problem while writing", bodyName)
+	ok = (err == nil)
 
 	preambleName := baseName + ".preamble.tex"
 	texPreamble := append(texdata[:loc[0]], []byte("\\dump")...)
-	ioutil.WriteFile(preambleName, texPreamble, 0644)
+	err = ioutil.WriteFile(preambleName, texPreamble, 0644)
+	check(err, "Problem while writing", preambleName)
+	ok = ok && (err == nil)
 
-	// manage preamble hash
-	// hashNewPreamble := md5.Sum(texPreamble)
-	// changed = bytes.Equal(hashNewPreamble[:], hashPreamble[:])
-	// copy(hashPreamble, hashNewPreamble)
+	return ok
 }
 
-// clearFiles is used by clearTeX and clearAux
+// clearFiles is used by clearTeX and clearAux.
+// Given one base and multiple extensions it removes the corresponding files.
 func clearFiles(base, extensions string) {
 	for _, ext := range strings.Split(extensions, ",") {
 		fileToDelete := base + "." + strings.TrimSpace(ext)
@@ -391,20 +424,24 @@ func clearFiles(base, extensions string) {
 	}
 }
 
+// clear the files produced by splitTeX().
 func clearTeX() {
 	clearFiles(baseName, "preamble.tex,body.tex")
 }
 
+// clear the auxiliary files produced by pdftex
 func clearAux() {
 	clearFiles(formatName, auxExtensions)
 }
 
+// precompile produce the `.fmt` file based on the `.preamble.tex` part.
 func precompile() {
 	if mustBuildFormat || !mustCompileAll && isFileMissing(formatName+".fmt") {
-		run("Precompile", "pdflatex", precompileOptions...)
+		run("Precompile", "pdftex", precompileOptions...)
 	}
 }
 
+// compile produce the `.pdf` file based on the `.body.tex` part.
 func compile(draft bool) {
 	msg := "Compile "
 	if draft {
@@ -417,9 +454,9 @@ func compile(draft bool) {
 	}
 	if draft {
 		draftOptions := append(compileOptions, "-draftmode")
-		run(msg, "pdflatex", draftOptions...)
+		run(msg, "pdftex", draftOptions...)
 	} else {
-		run(msg, "pdflatex", compileOptions...)
+		run(msg, "pdftex", compileOptions...)
 	}
 	if isRecompiling {
 		info("Wait for new changes...")
@@ -427,13 +464,18 @@ func compile(draft bool) {
 	isRecompiling = false
 }
 
+// recompile is called when the source file changes (and we are watching it).
 func recompile() {
-	splitTeX()
-	compile(false)
+	if splitTeX() {
+		compile(false)
+	} else {
+		isRecompiling = false
+	}
 }
 
 // This is the last function executed in this program.
 func end() {
+	// clear the files?
 	if mustClear {
 		clearAux()
 	}
@@ -502,7 +544,9 @@ func main() {
 						if !isRecompiling {
 							isRecompiling = true
 							info("File changed.")
-							go recompile()
+							// wait before to start compile
+							// hoping that this is enough for the file to be closed before.
+							time.AfterFunc(10*time.Millisecond, recompile)
 						}
 					}
 				case err, ok = <-watcher.Errors:
