@@ -105,6 +105,9 @@ var (
 	logSanitize        string
 	splitPattern       string
 	tempFolderName     string
+	clearFlag          string
+	mustClear          bool
+	auxExtensions      string
 	// global variables
 	texDistro         string
 	texVersionStr     string
@@ -167,6 +170,8 @@ func SetParameters() {
 	if texDistro == "miktex" {
 		flag.StringVar(&tempFolderName, "temp-folder", "temp_files", "Folder to store all temp files, .fmt included [MikTeX only].")
 	}
+	flag.StringVar(&clearFlag, "clear", "auto", "Clear auxiliary files and .fmt at end [auto|yes|no].\n When watching auto=true, else auto=false.\nIn debug mode clear is false.")
+	flag.StringVar(&auxExtensions, "aux-extensions", "aux,bbl,blg,fmt,fff,glg,glo,gls,idx,ilg,ind,lof,lot,nav,out,ptc,snm,sta,stp,toc", "Extensions to remove in clear at the end procedure.\n")
 	flag.BoolVarP(&mustShowVersion, "version", "v", false, "Print the version number.")
 	flag.BoolVarP(&mustShowHelp, "help", "h", false, "Print this help message.")
 	// keep the flags order
@@ -258,6 +263,9 @@ func SetParameters() {
 	}
 	compileOptions = append(compileOptions, "-jobname="+baseName, sourceName)
 	precompileOptions = append(precompileOptions, "-jobname="+baseName, "&pdflatex "+baseName+".preamble.tex")
+
+	// clear or not
+	mustClear = (infoLevel < infoDebug) && (clearFlag == "yes" || clearFlag == "auto" && !mustNoWatch)
 }
 
 // check if file is missing
@@ -369,9 +377,26 @@ func splitTeX() {
 	// copy(hashPreamble, hashNewPreamble)
 }
 
+// clearFiles is used by clearTeX and clearAux
+func clearFiles(base, extensions string) {
+	for _, ext := range strings.Split(extensions, ",") {
+		fileToDelete := base + "." + strings.TrimSpace(ext)
+		if isFileMissing(fileToDelete) {
+			continue
+		}
+		if infoLevel >= infoActions {
+			fmt.Println("Remove", fileToDelete)
+		}
+		os.Remove(fileToDelete)
+	}
+}
+
 func clearTeX() {
-	os.Remove(baseName + ".preamble.tex")
-	os.Remove(baseName + ".body.tex")
+	clearFiles(baseName, "preamble.tex,body.tex")
+}
+
+func clearAux() {
+	clearFiles(formatName, auxExtensions)
 }
 
 func precompile() {
@@ -380,14 +405,22 @@ func precompile() {
 	}
 }
 
-func compile() {
+func compile(draft bool) {
 	msg := "Compile "
+	if draft {
+		msg += "draft "
+	}
 	if mustCompileAll {
 		msg += "(skip precompile)"
 	} else {
 		msg += "(use precomiled " + formatName + ".fmt)"
 	}
-	run(msg, "pdflatex", compileOptions...)
+	if draft {
+		draftOptions := append(compileOptions, "-draftmode")
+		run(msg, "pdflatex", draftOptions...)
+	} else {
+		run(msg, "pdflatex", compileOptions...)
+	}
 	if isRecompiling {
 		info("Wait for new changes...")
 	}
@@ -396,11 +429,14 @@ func compile() {
 
 func recompile() {
 	splitTeX()
-	compile()
+	compile(false)
 }
 
 // This is the last function executed in this program.
 func end() {
+	if mustClear {
+		clearAux()
+	}
 	if infoLevel < infoDebug {
 		clearTeX()
 	} else {
@@ -440,7 +476,7 @@ func main() {
 	precompile()
 	// start compiling
 	for i := 0; i < numCompilesAtStart; i++ {
-		compile()
+		compile(i < numCompilesAtStart-1) // only the last compile is not in draft mode
 	}
 	// watching ?
 	if !mustNoWatch {
