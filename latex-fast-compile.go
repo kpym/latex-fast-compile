@@ -113,8 +113,8 @@ var (
 	// global variables
 	texDistro         string
 	texVersionStr     string
-	baseName          string
-	formatName        string
+	inBase            string
+	outBase           string
 	isRecompiling     bool
 	infoLevel         infoLevelType
 	reSanitize        *regexp.Regexp
@@ -162,7 +162,9 @@ func setDistro() {
 
 // Set the configuration variables from the command line flags
 func SetParameters() {
+	// set the distro based on the pdftex version
 	setDistro()
+	// the list of flags
 	flag.BoolVar(&mustBuildFormat, "precompile", false, "Force to create .fmt file even if it exists.")
 	flag.BoolVar(&mustCompileAll, "skip-fmt", false, "Skip .fmt file and compile all.")
 	flag.BoolVar(&mustNotSync, "no-synctex", false, "Do not build .synctex file.")
@@ -172,8 +174,9 @@ func SetParameters() {
 	flag.StringVar(&logSanitize, "log-sanitize", `(?m)^(?:! |l\.|<recently read> ).*$`, "Match the log against this regex before display, or display all if empty.\n")
 	flag.StringVar(&splitPattern, "split", `(?m)^\s*(?:%\s*end\s*preamble|\\begin{document})`, "Match the log against this regex before display, or display all if empty.\n")
 	if texDistro == "miktex" {
-		flag.StringVar(&tempFolderName, "temp-folder", "temp_files", "Folder to store all temp files, .fmt included [MikTeX only].")
+		tempFolderName = "temp_files"
 	}
+	flag.StringVar(&tempFolderName, "temp-folder", tempFolderName, "Folder to store all temp files, .fmt included.")
 	flag.StringVar(&clearFlag, "clear", "auto", "Clear auxiliary files and .fmt at end [auto|yes|no].\n When watching auto=true, else auto=false.\nIn debug mode clear is false.")
 	flag.StringVar(&auxExtensions, "aux-extensions", "aux,bbl,blg,fmt,fff,glg,glo,gls,idx,ilg,ind,lof,lot,nav,out,ptc,snm,sta,stp,toc", "Extensions to remove in clear at the end procedure.\n")
 	flag.BoolVarP(&mustShowVersion, "version", "v", false, "Print the version number.")
@@ -194,8 +197,6 @@ func SetParameters() {
 	}
 	// set the info level
 	infoLevel = infoLevelFromString(infoLevelFlag)
-	// set the distro based on the pdftex version
-	setDistro()
 	// display the version?
 	if mustShowVersion {
 		printVersion()
@@ -210,7 +211,7 @@ func SetParameters() {
 		check(errors.New("You should provide a .tex file to compile."))
 	}
 
-	baseName = strings.TrimSuffix(flag.Arg(0), ".tex")
+	inBase = strings.TrimSuffix(flag.Arg(0), ".tex")
 
 	// synctex or not?
 	if !mustNotSync {
@@ -251,22 +252,28 @@ func SetParameters() {
 		mustCompileAll = true
 	}
 	// set temp folder?
-	formatName = baseName
+	outBase = inBase
 	if len(tempFolderName) > 0 {
-		compileOptions = append(compileOptions, "-aux-directory="+tempFolderName)
-		precompileOptions = append(precompileOptions, "-aux-directory="+tempFolderName)
-		formatName = filepath.Join(tempFolderName, baseName)
+		if texDistro == "miktex" {
+			compileOptions = append(compileOptions, "-aux-directory="+tempFolderName)
+			precompileOptions = append(precompileOptions, "-aux-directory="+tempFolderName)
+		} else {
+			compileOptions = append(compileOptions, "-output-directory="+tempFolderName)
+			precompileOptions = append(precompileOptions, "-output-directory="+tempFolderName)
+		}
+
+		outBase = filepath.Join(tempFolderName, inBase)
 	}
 
 	// set the source filename
-	var sourceName string
+	var compileName string
 	if mustCompileAll {
-		sourceName = baseName + ".tex"
+		compileName = inBase + ".tex"
 	} else {
-		sourceName = "&" + baseName + " " + baseName + ".body.tex"
+		compileName = "&" + inBase + " " + inBase + ".body.tex"
 	}
-	compileOptions = append(compileOptions, "-jobname="+baseName, sourceName)
-	precompileOptions = append(precompileOptions, "-jobname="+baseName, "&pdflatex "+baseName+".preamble.tex")
+	compileOptions = append(compileOptions, "-jobname="+inBase, compileName)
+	precompileOptions = append(precompileOptions, "-jobname="+inBase, "&pdflatex "+inBase+".preamble.tex")
 
 	// clear or not
 	mustClear = (infoLevel < infoDebug) && (clearFlag == "yes" || clearFlag == "auto" && !mustNoWatch)
@@ -344,8 +351,8 @@ func run(info, command string, args ...string) {
 			fmt.Println("\nThe compilation finished with errors.")
 		}
 		if infoLevel >= infoErrorsAndLog {
-			dat, err := ioutil.ReadFile(formatName + ".log")
-			check(err, "Problem reading ", formatName+".log")
+			dat, err := ioutil.ReadFile(outBase + ".log")
+			check(err, "Problem reading ", outBase+".log")
 			fmt.Println(sanitizeLog(dat))
 		}
 	}
@@ -362,7 +369,7 @@ func info(message ...interface{}) {
 // it also append `\dump` to the preamble and perpend `%&...` to the body.
 // both files are saved in the same folder (not in the temporary one) as the original source.
 func splitTeX() (ok bool) {
-	sourceName := baseName + ".tex"
+	sourceName := inBase + ".tex"
 	// do I have to do something?
 	if !mustBuildFormat && mustCompileAll {
 		if isFileMissing(sourceName) {
@@ -394,13 +401,13 @@ func splitTeX() (ok bool) {
 		return false
 	}
 	// important to first get body because textdata is polluted by \dump in the next line
-	bodyName := baseName + ".body.tex"
-	texBody := append([]byte("\n%&"+baseName+"\n"), texdata[loc[0]:]...)
+	bodyName := inBase + ".body.tex"
+	texBody := append([]byte("\n%&"+inBase+"\n"), texdata[loc[0]:]...)
 	err = ioutil.WriteFile(bodyName, texBody, 0644)
 	check(err, "Problem while writing", bodyName)
 	ok = (err == nil)
 
-	preambleName := baseName + ".preamble.tex"
+	preambleName := inBase + ".preamble.tex"
 	texPreamble := append(texdata[:loc[0]], []byte("\\dump")...)
 	err = ioutil.WriteFile(preambleName, texPreamble, 0644)
 	check(err, "Problem while writing", preambleName)
@@ -426,17 +433,17 @@ func clearFiles(base, extensions string) {
 
 // clear the files produced by splitTeX().
 func clearTeX() {
-	clearFiles(baseName, "preamble.tex,body.tex")
+	clearFiles(inBase, "preamble.tex,body.tex")
 }
 
 // clear the auxiliary files produced by pdftex
 func clearAux() {
-	clearFiles(formatName, auxExtensions)
+	clearFiles(outBase, auxExtensions)
 }
 
 // precompile produce the `.fmt` file based on the `.preamble.tex` part.
 func precompile() {
-	if mustBuildFormat || !mustCompileAll && isFileMissing(formatName+".fmt") {
+	if mustBuildFormat || !mustCompileAll && isFileMissing(outBase+".fmt") {
 		run("Precompile", "pdftex", precompileOptions...)
 	}
 }
@@ -450,7 +457,7 @@ func compile(draft bool) {
 	if mustCompileAll {
 		msg += "(skip precompile)"
 	} else {
-		msg += "(use precomiled " + formatName + ".fmt)"
+		msg += "(use precomiled " + outBase + ".fmt)"
 	}
 	if draft {
 		draftOptions := append(compileOptions, "-draftmode")
@@ -458,6 +465,17 @@ func compile(draft bool) {
 	} else {
 		run(msg, "pdftex", compileOptions...)
 	}
+	if len(tempFolderName) > 0 && texDistro != "miktex" {
+		if !isFileMissing(outBase + ".pdf") {
+			info("Move pdf from temp folder.")
+			os.Rename(outBase+".pdf", inBase+".pdf")
+		}
+		if !mustNotSync && !isFileMissing(outBase+".synctex") {
+			info("Move synctex from temp folder.")
+			os.Rename(outBase+".synctex", inBase+".synctex")
+		}
+	}
+
 	if isRecompiling {
 		info("Wait for new changes...")
 	}
@@ -482,7 +500,7 @@ func end() {
 	if infoLevel < infoDebug {
 		clearTeX()
 	} else {
-		fmt.Println("Do not clear", baseName+".preamble.tex", "and", baseName+".body.tex.")
+		fmt.Println("Do not clear", inBase+".preamble.tex", "and", inBase+".body.tex.")
 		fmt.Println("End.")
 	}
 	// in case of error return status is 1
@@ -559,8 +577,8 @@ func main() {
 		}()
 
 		// out of the box fsnotify can watch a single file, or a single directory
-		err = watcher.Add(baseName + ".tex")
-		check(err, "Problem watching", baseName+".tex")
+		err = watcher.Add(inBase + ".tex")
+		check(err, "Problem watching", inBase+".tex")
 
 		<-done
 	}
