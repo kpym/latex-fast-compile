@@ -19,7 +19,7 @@ Usage: latex-fast-compile [options] filename[.tex].
       --compiles-at-start int   Number of compiles before to start watching. (default 1)
       --info string             The info level [no|errors|errors+log|actions|debug]. (default "actions")
       --log-sanitize string     Match the log against this regex before display, or display all if empty.
-                                 (default "(?m)^(?:! |l\\.|<recently read> ).*$")
+                                 (default "(?ms)^(?:! |l\\.|<recently read> ).*?$(?:\\s^.*?$){0,2}")
       --split string            Match the log against this regex before display, or display all if empty.
                                  (default "(?m)^\\s*(?:%\\s*end\\s*preamble|\\\\begin{document})")
       --temp-folder string      Folder to store all temp files, .fmt included.

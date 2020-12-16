@@ -191,7 +191,7 @@ func SetParameters() {
 	flag.BoolVar(&mustNoWatch, "no-watch", false, "Do not watch for file changes in the .tex file.")
 	flag.IntVar(&numCompilesAtStart, "compiles-at-start", 1, "Number of compiles before to start watching.")
 	flag.StringVar(&infoLevelFlag, "info", "actions", "The info level [no|errors|errors+log|actions|debug].")
-	flag.StringVar(&logSanitize, "log-sanitize", `(?m)^(?:! |l\.|<recently read> ).*$`, "Match the log against this regex before display, or display all if empty.\n")
+	flag.StringVar(&logSanitize, "log-sanitize", `(?ms)^(?:! |l\.|<recently read> ).*?$(?:\s^.*?$){0,2}`, "Match the log against this regex before display, or display all if empty.\n")
 	flag.StringVar(&splitPattern, "split", `(?m)^\s*(?:%\s*end\s*preamble|\\begin{document})`, "Match the log against this regex before display, or display all if empty.\n")
 	flag.StringVar(&tempFolderName, "temp-folder", "", "Folder to store all temp files, .fmt included.")
 	flag.StringVar(&clearFlag, "clear", "auto", "Clear auxiliary files and .fmt at end [auto|yes|no].\n When watching auto=true, else auto=false.\nIn debug mode clear is false.")
@@ -465,19 +465,31 @@ func splitTeX() (ok bool) {
 		check(errors.New("Problem while splitting " + sourceName + " to preamble and body."))
 		return false
 	}
-	// important to first get body because textdata is polluted by \dump in the next line
-	bodyName := inBase + ".body.tex"
-	info(" create", bodyName)
-	texBody := append([]byte("\n%&"+inBase+"\n"), texdata[loc[0]:]...)
-	err = ioutil.WriteFile(bodyName, texBody, 0644)
-	check(err, "Problem while writing", bodyName)
-	ok = (err == nil)
+	texPreamble := string(texdata[:loc[0]])
+	texBody := string(texdata[loc[0]:])
 
+	// create the .preamble.tex
 	preambleName := inBase + ".preamble.tex"
 	info(" create", preambleName)
-	texPreamble := append(texdata[:loc[0]], []byte("\\dump")...)
-	err = ioutil.WriteFile(preambleName, texPreamble, 0644)
+	err = ioutil.WriteFile(preambleName, []byte(texPreamble+"\\dump"), 0644)
 	check(err, "Problem while writing", preambleName)
+	ok = (err == nil)
+
+	// create the .body.tex
+	// first count the number on lines in the header
+	// to add them to the body
+	// to preserve the line numbering (for errors location and synctex)
+	numLinesInPreamble := strings.Count(texPreamble, "\n")
+	// if the preamble is empty, no need
+	if numLinesInPreamble == 0 {
+		info("The preamble is empty.")
+		numLinesInPreamble = 1
+	}
+	fakePreamble := "%&" + inBase + strings.Repeat("\n", numLinesInPreamble)
+	bodyName := inBase + ".body.tex"
+	info(" create", bodyName)
+	err = ioutil.WriteFile(bodyName, []byte(fakePreamble+texBody), 0644)
+	check(err, "Problem while writing", bodyName)
 	ok = ok && (err == nil)
 
 	return ok
@@ -513,7 +525,7 @@ func precompile() {
 	if mustBuildFormat || !mustCompileAll && isFileMissing(outBase+".fmt") {
 		run("Precompile", "pdftex", precompileOptions...)
 	}
-	// we tel to splitTex that the preamble is not needed any more
+	// we tel to splitTeX that the preamble is not needed any more
 	mustBuildFormat = false
 }
 
