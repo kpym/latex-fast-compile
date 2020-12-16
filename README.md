@@ -42,7 +42,7 @@ To compile `cylinder.tex` you can simply use:
  create cylinder.body.tex
  create cylinder.preamble.tex
 ::::::: Precompile...done [2.0s]
-::::::: Compile (use precomiled cylinder.fmt)...done [1.1s]
+::::::: Compile (use precompiled cylinder.fmt)...done [1.1s]
 Watching for file changes...(to exit press Ctrl/Cmd-C).
 ```
 1. The source `cylinder.tex` is split to `cylinder.preamble.tex` and `cylinder.body.tex`.
@@ -74,8 +74,8 @@ latex-fast-compile Très\ étrange.tex --no-watch --compiles-at-start=2
  create Tresetrange.body.tex
  create Tresetrange.preamble.tex
 ::::::: Precompile...done [3.3s]
-::::::: Compile draft (use precomiled Tresetrange.fmt)...done [1.9s]
-::::::: Compile (use precomiled Tresetrange.fmt)...done [2.3s]
+::::::: Compile draft (use precompiled Tresetrange.fmt)...done [1.9s]
+::::::: Compile (use precompiled Tresetrange.fmt)...done [2.3s]
  copy Tresetrange.pdf to Très étrange.pdf
  delete Tresetrange.pdf
  move Tresetrange.synctex to Très étrange.synctex

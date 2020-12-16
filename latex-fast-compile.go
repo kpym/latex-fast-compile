@@ -526,7 +526,7 @@ func compile(draft bool) {
 	if mustCompileAll {
 		msg += "(skip precompile)"
 	} else {
-		msg += "(use precomiled " + outBase + ".fmt)"
+		msg += "(use precompiled " + outBase + ".fmt)"
 	}
 	if draft {
 		draftOptions := append(compileOptions, "-draftmode")
