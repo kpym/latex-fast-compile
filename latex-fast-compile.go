@@ -560,7 +560,18 @@ func compile(draft bool) {
 			check(err, "Error while copy "+outBase+".synctex  to "+inBaseOriginal+".synctex.")
 		}
 	}
-
+	// modify .synctex?
+	if !mustNotSync && (!mustCompileAll || mustCompileAll && inBase != inBaseOriginal) {
+		info(" modify", inBaseOriginal+".synctex")
+		syncdata, err := ioutil.ReadFile(inBaseOriginal + ".synctex")
+		check(err, "Problem reading", inBaseOriginal+".synctex")
+		ext := ".body.tex"
+		if mustCompileAll {
+			ext = ".tex"
+		}
+		syncdata = bytes.Replace(syncdata, []byte(inBase+ext), []byte(inBaseOriginal+".tex"), 1)
+		err = ioutil.WriteFile(inBaseOriginal+".synctex", syncdata, 0644)
+	}
 	if isRecompiling {
 		info("Wait for new changes...")
 	}
