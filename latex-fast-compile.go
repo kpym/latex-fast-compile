@@ -62,7 +62,7 @@ func check(e error, m ...interface{}) {
 		}
 		fmt.Println(e)
 		// if we are in watch mode, do not halt on error
-		if !isRecompiling {
+		if !isCompiling {
 			panic(e)
 		}
 	}
@@ -122,7 +122,7 @@ var (
 	inBaseOriginal    string
 	inBase            string
 	outBase           string
-	isRecompiling     bool
+	isCompiling       bool
 	infoLevel         infoLevelType
 	reSanitize        *regexp.Regexp
 	reSplit           *regexp.Regexp
@@ -141,7 +141,7 @@ func getTeXVersion() string {
 	cmd.Stderr = &cmdOutput
 	// print command?
 	if infoLevel == infoDebug {
-		fmt.Println(delimit("command", cmd.String()))
+		fmt.Println(delimit("command", "", cmd.String()))
 	}
 	// run command
 	err = cmd.Run()
@@ -196,7 +196,7 @@ func SetParameters() {
 	flag.StringVar(&tempFolderName, "temp-folder", "", "Folder to store all temp files, .fmt included.")
 	flag.StringVar(&clearFlag, "clear", "auto", "Clear auxiliary files and .fmt at end [auto|yes|no].\n When watching auto=true, else auto=false.\nIn debug mode clear is false.")
 	flag.StringVar(&auxExtensions, "aux-extensions", "aux,bbl,blg,fmt,fff,glg,glo,gls,idx,ilg,ind,lof,lot,nav,out,ptc,snm,sta,stp,toc", "Extensions to remove in clear at the end procedure.\n")
-	flag.BoolVar(&mustNoNormalize, "no-normalize", false, "Keep accents and spaces in intermediate files.")
+	flag.BoolVar(&mustNoNormalize, "no-normalize", false, "Keep accents and spaces in intermediate file names.")
 	flag.BoolVarP(&mustShowVersion, "version", "v", false, "Print the version number.")
 	flag.BoolVarP(&mustShowHelp, "help", "h", false, "Print this help message.")
 	// keep the flags order
@@ -322,11 +322,11 @@ func isFolderMissing(foldername string) bool {
 // delimit produce something like
 // ---------------------- what
 // msg
-// ----------------------
+// ---------------------- end
 // and is used to delimit log output and commands when debugging
-func delimit(what, msg string) string {
+func delimit(what, end, msg string) string {
 	var line string = strings.Repeat("-", 77)
-	return line + " " + what + "\n" + msg + "\n" + line
+	return line + " " + what + "\n" + msg + "\n" + line + " " + end
 }
 
 // sanitizeLog try to keep only the lines related to the errors.
@@ -334,21 +334,21 @@ func delimit(what, msg string) string {
 func sanitizeLog(log []byte) string {
 
 	if reSanitize == nil {
-		return delimit("raw log", string(log))
+		return delimit("raw log", "end log", string(log))
 	}
 
 	errorLines := reSanitize.FindAll(log, -1)
 	if len(errorLines) == 0 {
 		return ("Nothing interesting in the log.")
 	} else {
-		return delimit("sanitized log", string(bytes.Join(errorLines, []byte("\n"))))
+		return delimit("sanitized log", "end log", string(bytes.Join(errorLines, []byte("\n"))))
 	}
 
 }
 
 // Build, print and run command.
 // The info parameter is printed if the infoLevel authorize this.
-func run(info, command string, args ...string) {
+func run(info, command string, args ...string) (ok bool) {
 	var startTime time.Time
 	// build command (without possible interactions)
 	cmd := exec.Command(command, args...)
@@ -357,7 +357,7 @@ func run(info, command string, args ...string) {
 	cmd.Stderr = nil
 	// print command?
 	if infoLevel == infoDebug {
-		fmt.Println(delimit("command", cmd.String()))
+		fmt.Println(delimit("command", "", cmd.String()))
 	}
 	// print action?
 	if infoLevel >= infoActions {
@@ -381,6 +381,8 @@ func run(info, command string, args ...string) {
 			fmt.Println(sanitizeLog(dat))
 		}
 	}
+
+	return err == nil
 }
 
 // info print the message only if the infoLevel authorize it.
@@ -530,7 +532,8 @@ func precompile() {
 }
 
 // compile produce the `.pdf` file based on the `.body.tex` part.
-func compile(draft bool) {
+func compile(draft bool) (ok bool) {
+	defer func() { isCompiling = false }()
 	msg := "Compile "
 	if draft {
 		msg += "draft "
@@ -542,9 +545,12 @@ func compile(draft bool) {
 	}
 	if draft {
 		draftOptions := append(compileOptions, "-draftmode")
-		run(msg, "pdftex", draftOptions...)
+		ok = run(msg, "pdftex", draftOptions...)
 	} else {
-		run(msg, "pdftex", compileOptions...)
+		ok = run(msg, "pdftex", compileOptions...)
+	}
+	if !ok {
+		return
 	}
 	// move/rename .pdf and .synctex to the original source
 	if !draft && inBaseOriginal != outBase && (texDistro != "miktex" || inBaseOriginal != inBase) {
@@ -571,11 +577,13 @@ func compile(draft bool) {
 		}
 		syncdata = bytes.Replace(syncdata, []byte(inBase+ext), []byte(inBaseOriginal+".tex"), 1)
 		err = ioutil.WriteFile(inBaseOriginal+".synctex", syncdata, 0644)
+		check(err, "Problem modifying", inBaseOriginal+".synctex")
 	}
-	if isRecompiling {
+	if isCompiling {
 		info("Wait for new changes...")
 	}
-	isRecompiling = false
+
+	return
 }
 
 // recompile is called when the source file changes (and we are watching it).
@@ -583,7 +591,7 @@ func recompile() {
 	if splitTeX() {
 		compile(false)
 	} else {
-		isRecompiling = false
+		isCompiling = false
 	}
 }
 
@@ -632,7 +640,11 @@ func main() {
 	precompile()
 	// start compiling
 	for i := 0; i < numCompilesAtStart; i++ {
-		compile(i < numCompilesAtStart-1) // only the last compile is not in draft mode
+		isCompiling = true
+		ok := compile(i < numCompilesAtStart-1) // only the last compile is not in draft mode
+		if !ok {
+			break
+		}
 	}
 	// watching ?
 	if !mustNoWatch {
@@ -655,12 +667,16 @@ func main() {
 						return
 					}
 					if event.Op&fsnotify.Write == fsnotify.Write {
-						if !isRecompiling {
-							isRecompiling = true
+						if !isCompiling {
+							isCompiling = true
 							info("File changed.")
 							// wait before to start compile
 							// hoping that this is enough for the file to be closed before.
 							time.AfterFunc(10*time.Millisecond, recompile)
+						} else {
+							if infoLevel >= infoDebug {
+								info("File changed : compilation already running.")
+							}
 						}
 					}
 				case err, ok = <-watcher.Errors:
