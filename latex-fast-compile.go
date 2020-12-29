@@ -19,6 +19,7 @@ import (
 	"golang.org/x/text/transform"
 	"golang.org/x/text/unicode/norm"
 
+	"github.com/fatih/color"
 	"github.com/fsnotify/fsnotify"
 	flag "github.com/spf13/pflag"
 )
@@ -54,12 +55,14 @@ func printHelp() {
 // - print the error message and panic if there is an error
 func check(e error, m ...interface{}) {
 	if e != nil {
+		color.Set(color.FgRed)
 		if len(m) > 0 {
 			fmt.Print("Error: ")
 			fmt.Println(m...)
 		} else {
-			fmt.Println("Error.")
+			fmt.Println("Error.\n")
 		}
+		color.Unset()
 		fmt.Println(e)
 		// if we are in watch mode, do not halt on error
 		if !isCompiling {
@@ -123,6 +126,7 @@ var (
 	inBase            string
 	outBase           string
 	isCompiling       bool
+	isRecompiling     bool
 	infoLevel         infoLevelType
 	reSanitize        *regexp.Regexp
 	reSplit           *regexp.Regexp
@@ -348,7 +352,7 @@ func sanitizeLog(log []byte) string {
 
 // Build, print and run command.
 // The info parameter is printed if the infoLevel authorize this.
-func run(info, command string, args ...string) (ok bool) {
+func run(info, command string, args ...string) (err error) {
 	var startTime time.Time
 	// build command (without possible interactions)
 	cmd := exec.Command(command, args...)
@@ -368,21 +372,27 @@ func run(info, command string, args ...string) (ok bool) {
 	err = cmd.Run()
 	// print time?
 	if infoLevel >= infoActions {
+		if err == nil {
+			color.Set(color.FgGreen)
+		} else {
+			color.Set(color.FgRed)
+		}
 		fmt.Printf("done [%.1fs]\n", time.Since(startTime).Seconds())
+		color.Unset()
 	}
 	// if error
 	if infoLevel == infoDebug || infoLevel >= infoErrors && err != nil {
-		if err != nil {
-			fmt.Println("\nThe compilation finished with errors.")
-		}
 		if infoLevel >= infoErrorsAndLog {
-			dat, err := ioutil.ReadFile(outBase + ".log")
-			check(err, "Problem reading ", outBase+".log")
+			dat, logErr := ioutil.ReadFile(outBase + ".log")
+			check(logErr, "Problem reading ", outBase+".log")
 			fmt.Println(sanitizeLog(dat))
+		}
+		if err != nil {
+			color.Red("The compilation finished with errors.\n")
 		}
 	}
 
-	return err == nil
+	return err
 }
 
 // info print the message only if the infoLevel authorize it.
@@ -523,17 +533,29 @@ func clearAux() {
 }
 
 // precompile produce the `.fmt` file based on the `.preamble.tex` part.
-func precompile() {
+func precompile() (err error) {
 	if mustBuildFormat || !mustCompileAll && isFileMissing(outBase+".fmt") {
-		run("Precompile", "pdftex", precompileOptions...)
+		err = run("Precompile", "pdftex", precompileOptions...)
 	}
 	// we tel to splitTeX that the preamble is not needed any more
 	mustBuildFormat = false
+
+	return err
+}
+
+// compileEnd is defered to the compile end
+func compileEnd() {
+	if isRecompiling {
+		color.Set(color.FgCyan)
+		info("Wait for new changes...")
+		color.Unset()
+	}
+	isCompiling = false
 }
 
 // compile produce the `.pdf` file based on the `.body.tex` part.
-func compile(draft bool) (ok bool) {
-	defer func() { isCompiling = false }()
+func compile(draft bool) (err error) {
+	defer compileEnd()
 	msg := "Compile "
 	if draft {
 		msg += "draft "
@@ -545,12 +567,12 @@ func compile(draft bool) (ok bool) {
 	}
 	if draft {
 		draftOptions := append(compileOptions, "-draftmode")
-		ok = run(msg, "pdftex", draftOptions...)
+		err = run(msg, "pdftex", draftOptions...)
 	} else {
-		ok = run(msg, "pdftex", compileOptions...)
+		err = run(msg, "pdftex", compileOptions...)
 	}
-	if !ok {
-		return
+	if err != nil {
+		return err
 	}
 	// move/rename .pdf and .synctex to the original source
 	if !draft && inBaseOriginal != outBase && (texDistro != "miktex" || inBaseOriginal != inBase) {
@@ -579,24 +601,23 @@ func compile(draft bool) (ok bool) {
 		err = ioutil.WriteFile(inBaseOriginal+".synctex", syncdata, 0644)
 		check(err, "Problem modifying", inBaseOriginal+".synctex")
 	}
-	if isCompiling {
-		info("Wait for new changes...")
-	}
 
-	return
+	return nil
 }
 
 // recompile is called when the source file changes (and we are watching it).
 func recompile() {
 	if splitTeX() {
+		isRecompiling = true
 		compile(false)
+		isRecompiling = false
 	} else {
 		isCompiling = false
 	}
 }
 
 // This is the last function executed in this program.
-func end() {
+func mainEnd() {
 	// clear the files?
 	if mustClear {
 		clearAux()
@@ -622,7 +643,7 @@ func catchCtrlC() {
 	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
 	go func() {
 		<-c
-		end()
+		mainEnd()
 	}()
 }
 
@@ -630,25 +651,28 @@ func catchCtrlC() {
 func main() {
 	// error handling
 	catchCtrlC()
-	defer end()
+	defer mainEnd()
 	// The flags
 	SetParameters()
 	// prepare the source files
 	splitTeX()
 
 	// create .fmt (if needed)
-	precompile()
+	err = precompile()
+	check(err, "Problem with the header compilation.")
 	// start compiling
 	for i := 0; i < numCompilesAtStart; i++ {
 		isCompiling = true
-		ok := compile(i < numCompilesAtStart-1) // only the last compile is not in draft mode
-		if !ok {
+		err = compile(i < numCompilesAtStart-1) // only the last compile is not in draft mode
+		if err != nil {
 			break
 		}
 	}
 	// watching ?
 	if !mustNoWatch {
+		color.Set(color.FgCyan)
 		info("Watching for file changes...(to exit press Ctrl/Cmd-C).")
+		color.Unset()
 		// creates a new file watcher
 		watcher, err := fsnotify.NewWatcher()
 		check(err, "Problem creating the file watcher")
