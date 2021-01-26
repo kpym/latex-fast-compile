@@ -16,11 +16,12 @@ Usage: latex-fast-compile [options] filename[.tex].
       --skip-fmt                Skip .fmt file and compile all.
       --no-synctex              Do not build .synctex file.
       --no-watch                Do not watch for file changes in the .tex file.
+  -x, --xelatex                 Use xelatex in place of pdflatex.
       --compiles-at-start int   Number of compiles before to start watching. (default 1)
       --info string             The info level [no|errors|errors+log|actions|debug]. (default "actions")
       --log-sanitize string     Match the log against this regex before display, or display all if empty.
                                  (default "(?ms)^(?:! |l\\.|<recently read> ).*?$(?:\\s^.*?$){0,2}")
-      --split string            Match the log against this regex before display, or display all if empty.
+      --split string            The regex that defines the end of the preamble.
                                  (default "(?m)^\\s*(?:%\\s*end\\s*preamble|\\\\begin{document})")
       --temp-folder string      Folder to store all temp files, .fmt included.
       --clear string            Clear auxiliary files and .fmt at end [auto|yes|no].
@@ -28,7 +29,7 @@ Usage: latex-fast-compile [options] filename[.tex].
                                 In debug mode clear is false. (default "auto")
       --aux-extensions string   Extensions to remove in clear at the end procedure.
                                  (default "aux,bbl,blg,fmt,fff,glg,glo,gls,idx,ilg,ind,lof,lot,nav,out,ptc,snm,sta,stp,toc")
-      --no-normalize            Keep accents and spaces in intermediate files.
+      --no-normalize            Keep accents and spaces in intermediate file names.
   -v, --version                 Print the version number.
   -h, --help                    Print this help message.
 ```
@@ -83,6 +84,10 @@ latex-fast-compile Très\ étrange.tex --no-watch --compiles-at-start=2
  remove Tresetrange.body.tex
 ```
 This is necessary because this kind of filenames do not work well for precompiled `.fmt` files.
+
+### XeLaTex
+
+We can use `xelatex` in place of `pdflatex` by specifying the `-x` (`--xelatex`) option. But it is good to know that `fontspec` and `polyglossia` (and any other package that access `ttf` or `otf` fonts) can't be in the precompiled header. If these two libraries are present in the preamble they are moved outside. But if they are included indirectly, the compilation will fail.
 
 ## Installation
 

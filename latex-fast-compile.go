@@ -34,7 +34,7 @@ func printVersion() {
 	// write the help message
 	fmt.Fprintf(out, "version: %s\n", version)
 	fmt.Fprintf(out, "tex distribution: %s\n", texDistro)
-	fmt.Fprintf(out, "pdftex version: %s\n", texVersionStr)
+	fmt.Fprintf(out, texCompiler+" version: %s\n", texVersionStr)
 }
 
 // Display the usage help message
@@ -108,6 +108,7 @@ var (
 	mustCompileAll     bool
 	mustNotSync        bool
 	mustNoWatch        bool
+	mustUseXe          bool
 	numCompilesAtStart int
 	mustShowHelp       bool
 	mustShowVersion    bool
@@ -120,6 +121,8 @@ var (
 	auxExtensions      string
 	mustNoNormalize    bool
 	// global variables
+	texCompiler       string
+	latexFormat       string
 	texDistro         string
 	texVersionStr     string
 	inBaseOriginal    string
@@ -136,11 +139,11 @@ var (
 	err error
 )
 
-// getTeXVersion return the first line from `pdftex --version`
+// getTeXVersion return the first line from `(pdf|xe)tex --version`
 func getTeXVersion() string {
 	// build command
 	var cmdOutput strings.Builder
-	cmd := exec.Command("pdftex", "--version")
+	cmd := exec.Command(texCompiler, "--version")
 	cmd.Stdout = &cmdOutput
 	cmd.Stderr = &cmdOutput
 	// print command?
@@ -157,7 +160,7 @@ func getTeXVersion() string {
 	return strings.TrimSpace(linesOutput[0])
 }
 
-// Try to recognize the distribution based on the pdftex version.
+// Try to recognize the distribution based on the tex version.
 func setDistro() {
 	texVersionStr = getTeXVersion()
 	if strings.Contains(texVersionStr, "MiKTeX") {
@@ -186,17 +189,16 @@ func normalizeName(fileName string) string {
 
 // Set the configuration variables from the command line flags
 func SetParameters() {
-	// set the distro based on the pdftex version
-	setDistro()
 	// the list of flags
 	flag.BoolVar(&mustBuildFormat, "precompile", false, "Force to create .fmt file even if it exists.")
 	flag.BoolVar(&mustCompileAll, "skip-fmt", false, "Skip .fmt file and compile all.")
 	flag.BoolVar(&mustNotSync, "no-synctex", false, "Do not build .synctex file.")
 	flag.BoolVar(&mustNoWatch, "no-watch", false, "Do not watch for file changes in the .tex file.")
+	flag.BoolVarP(&mustUseXe, "xelatex", "x", false, "Use xelatex in place of pdflatex.")
 	flag.IntVar(&numCompilesAtStart, "compiles-at-start", 1, "Number of compiles before to start watching.")
 	flag.StringVar(&infoLevelFlag, "info", "actions", "The info level [no|errors|errors+log|actions|debug].")
 	flag.StringVar(&logSanitize, "log-sanitize", `(?ms)^(?:! |l\.|<recently read> ).*?$(?:\s^.*?$){0,2}`, "Match the log against this regex before display, or display all if empty.\n")
-	flag.StringVar(&splitPattern, "split", `(?m)^\s*(?:%\s*end\s*preamble|\\begin{document})`, "Match the log against this regex before display, or display all if empty.\n")
+	flag.StringVar(&splitPattern, "split", `(?m)^\s*(?:%\s*end\s*preamble|\\begin{document})`, "The regex that defines the end of the preamble.\n")
 	flag.StringVar(&tempFolderName, "temp-folder", "", "Folder to store all temp files, .fmt included.")
 	flag.StringVar(&clearFlag, "clear", "auto", "Clear auxiliary files and .fmt at end [auto|yes|no].\n When watching auto=true, else auto=false.\nIn debug mode clear is false.")
 	flag.StringVar(&auxExtensions, "aux-extensions", "aux,bbl,blg,fmt,fff,glg,glo,gls,idx,ilg,ind,lof,lot,nav,out,ptc,snm,sta,stp,toc", "Extensions to remove in clear at the end procedure.\n")
@@ -219,6 +221,16 @@ func SetParameters() {
 	}
 	// set the info level
 	infoLevel = infoLevelFromString(infoLevelFlag)
+	// set the compiler
+	if mustUseXe {
+		texCompiler = "xetex"
+		latexFormat = "xelatex"
+	} else {
+		texCompiler = "pdftex"
+		latexFormat = "pdflatex"
+	}
+	// set the distro based on the latex version
+	setDistro()
 	// display the version?
 	if mustShowVersion {
 		printVersion()
@@ -250,25 +262,24 @@ func SetParameters() {
 		reSanitize, err = regexp.Compile(logSanitize)
 		check(err)
 	}
-
-	// check if pdftex is present
+	// check if tex is present
 	if len(texDistro) == 0 {
 		if len(texVersionStr) == 0 {
-			check(errors.New("Can't find pdftex in the current path."))
+			check(errors.New("Can't find" + texCompiler + "in the current path."))
 		} else {
 			if infoLevel > infoNo {
-				fmt.Println("Unknown pdftex version:", texVersionStr)
+				fmt.Println("Unknown", texCompiler, " version:", texVersionStr)
 			}
 		}
 	}
 	if infoLevel == infoDebug {
 		printVersion()
-		pathPDFLatex, err := exec.LookPath("pdftex")
+		pathPDFLatex, err := exec.LookPath(texCompiler)
 		if err != nil {
 			// We should never be here
-			check(errors.New("Can't find pdftex in the current path (bis)."))
+			check(errors.New("Can't find" + texCompiler + "in the current path (bis)."))
 		}
-		fmt.Println("pdftex location:", pathPDFLatex)
+		fmt.Println(texCompiler, "location:", pathPDFLatex)
 	}
 
 	// set split pattern
@@ -296,11 +307,11 @@ func SetParameters() {
 	}
 
 	// set the source filename
-	precompileName := "&pdflatex " + inBase + ".preamble.tex"
+	precompileName := "&" + latexFormat + " " + inBase + ".preamble.tex"
 	precompileOptions = append(precompileOptions, "-jobname="+inBase, precompileName)
 	compileName := "&" + inBase + " " + inBase + ".body.tex"
 	if mustCompileAll {
-		compileName = "&pdflatex " + inBase + ".tex"
+		compileName = "&" + latexFormat + " " + inBase + ".tex"
 	}
 	compileOptions = append(compileOptions, "-jobname="+inBase, compileName)
 
@@ -436,6 +447,30 @@ func copyFile(src, dst string) (ok bool) {
 	return
 }
 
+const xeFirstLine string = `\def\encodingdefault{OT1}\normalfont
+\everyjob\expandafter{\the\everyjob\def\encodingdefault{TU}\normalfont}`
+
+// The xetex precompilation is tricky, so we have to adapt the preamble
+func adaptPreamble(preamble string) (newPreamble, addToBody string) {
+	if !mustUseXe {
+		return preamble, ""
+	}
+	info("Adapt preamble to xelatex.")
+	info("Switch to OT1 encoding in the preamble. And restore TU encoding later.")
+	newPreamble = xeFirstLine
+	preambleLines := strings.Split(preamble, "\n")
+	for _, line := range preambleLines {
+		if strings.Contains(line, "fontspec") || strings.Contains(line, "polyglossia") {
+			info("Move line from preamble to body: ", line)
+			addToBody += line + "\n"
+		} else {
+			newPreamble += "\n" + line
+		}
+	}
+
+	return
+}
+
 // splitTeX split the `.tex` file to two files `.preamble.tex` and `.body.tex`.
 // it also append `\dump` to the preamble and perpend `%&...` to the body.
 // both files are saved in the same folder (not in the temporary one) as the original source.
@@ -482,6 +517,7 @@ func splitTeX() (ok bool) {
 
 	// create the .preamble.tex
 	preambleName := inBase + ".preamble.tex"
+	texPreamble, addToBody := adaptPreamble(texPreamble)
 	info(" create", preambleName)
 	err = ioutil.WriteFile(preambleName, []byte(texPreamble+"\\dump"), 0644)
 	check(err, "Problem while writing", preambleName)
@@ -491,7 +527,10 @@ func splitTeX() (ok bool) {
 	// first count the number on lines in the header
 	// to add them to the body
 	// to preserve the line numbering (for errors location and synctex)
-	numLinesInPreamble := strings.Count(texPreamble, "\n")
+	numLinesInPreamble := strings.Count(texPreamble, "\n") - strings.Count(addToBody, "\n")
+	if mustUseXe {
+		numLinesInPreamble -= strings.Count(xeFirstLine, "\n")
+	}
 	// if the preamble is empty, no need
 	if numLinesInPreamble == 0 {
 		info("The preamble is empty.")
@@ -500,7 +539,7 @@ func splitTeX() (ok bool) {
 	fakePreamble := "%&" + inBase + strings.Repeat("\n", numLinesInPreamble)
 	bodyName := inBase + ".body.tex"
 	info(" create", bodyName)
-	err = ioutil.WriteFile(bodyName, []byte(fakePreamble+texBody), 0644)
+	err = ioutil.WriteFile(bodyName, []byte(fakePreamble+addToBody+texBody), 0644)
 	check(err, "Problem while writing", bodyName)
 	ok = ok && (err == nil)
 
@@ -527,7 +566,7 @@ func clearTeX() {
 	clearFiles(inBase, "preamble.tex,body.tex")
 }
 
-// clear the auxiliary files produced by pdftex
+// clear the auxiliary files produced by the tex compiler
 func clearAux() {
 	clearFiles(outBase, auxExtensions)
 }
@@ -535,7 +574,7 @@ func clearAux() {
 // precompile produce the `.fmt` file based on the `.preamble.tex` part.
 func precompile() (err error) {
 	if mustBuildFormat || !mustCompileAll && isFileMissing(outBase+".fmt") {
-		err = run("Precompile", "pdftex", precompileOptions...)
+		err = run("Precompile", texCompiler, precompileOptions...)
 	}
 	// we tel to splitTeX that the preamble is not needed any more
 	mustBuildFormat = false
@@ -567,9 +606,9 @@ func compile(draft bool) (err error) {
 	}
 	if draft {
 		draftOptions := append(compileOptions, "-draftmode")
-		err = run(msg, "pdftex", draftOptions...)
+		err = run(msg, texCompiler, draftOptions...)
 	} else {
-		err = run(msg, "pdftex", compileOptions...)
+		err = run(msg, texCompiler, compileOptions...)
 	}
 	if err != nil {
 		return err
