@@ -120,6 +120,7 @@ var (
 	mustClear          bool
 	auxExtensions      string
 	mustNoNormalize    bool
+	additionalOptions  []string
 	// global variables
 	texCompiler       string
 	latexFormat       string
@@ -203,6 +204,7 @@ func SetParameters() {
 	flag.StringVar(&clearFlag, "clear", "auto", "Clear auxiliary files and .fmt at end [auto|yes|no].\n When watching auto=true, else auto=false.\nIn debug mode clear is false.")
 	flag.StringVar(&auxExtensions, "aux-extensions", "aux,bbl,blg,fmt,fff,glg,glo,gls,idx,ilg,ind,lof,lot,nav,out,ptc,snm,sta,stp,toc", "Extensions to remove in clear at the end procedure.\n")
 	flag.BoolVar(&mustNoNormalize, "no-normalize", false, "Keep accents and spaces in intermediate file names.")
+	flag.StringSliceVar(&additionalOptions, "option", []string{}, "Additional option to pass to the compiler. Can be used multiple times.")
 	flag.BoolVarP(&mustShowVersion, "version", "v", false, "Print the version number.")
 	flag.BoolVarP(&mustShowHelp, "help", "h", false, "Print this help message.")
 	// keep the flags order
@@ -256,6 +258,9 @@ func SetParameters() {
 	if !mustNotSync {
 		compileOptions = append(compileOptions, "--synctex=-1")
 	}
+	// additional options
+	compileOptions = append(compileOptions, additionalOptions...)
+	precompileOptions = append(precompileOptions, additionalOptions...)
 
 	// sanitize log or not?
 	if len(logSanitize) > 0 {
