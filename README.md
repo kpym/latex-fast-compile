@@ -119,4 +119,4 @@ You will find the resulting binaries in the `dist/` sub-folder.
 
 ## License
 
-MIT
+[MIT](LICENSE) License
