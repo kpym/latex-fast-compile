@@ -30,6 +30,7 @@ Usage: latex-fast-compile [options] filename[.tex].
       --aux-extensions string   Extensions to remove in clear at the end procedure.
                                  (default "aux,bbl,blg,fmt,fff,glg,glo,gls,idx,ilg,ind,lof,lot,nav,out,ptc,snm,sta,stp,toc")
       --no-normalize            Keep accents and spaces in intermediate file names.
+      --option strings          Additional option to pass to the compiler. Can be used multiple times.
   -v, --version                 Print the version number.
   -h, --help                    Print this help message.
 ```
