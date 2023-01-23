@@ -4,7 +4,7 @@ A small executable that pre-compile the preamble to speed up future compilations
 
 ## Usage
 
-```bash
+```
 > latex-fast-compile -h
 latex-fast-compile (version: --): compile latex source using precompiled header.
 
