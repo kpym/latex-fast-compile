@@ -112,7 +112,7 @@ After cloning this repo you can compile the sources with [goreleaser](https://gi
 
 ```shell
 git clone https://github.com/kpym/latex-fast-compile.git .
-goreleaser --snapshot --skip-publish --rm-dist
+goreleaser --snapshot --skip-publish --clean
 ```
 
 You will find the resulting binaries in the `dist/` sub-folder.
